@@ -157,12 +157,14 @@ const VoiceChatbot = () => {
   const [error, setError] = useState('');
   const [bars, setBars] = useState(Array(32).fill(2));
   const [playingId, setPlayingId] = useState(null);
+  const [userAudioUrl, setUserAudioUrl] = useState(null); // For user's recorded audio
 
   const recordingTimerRef = useRef(null);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
   const chatEndRef = useRef(null);
+  const streamRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -173,6 +175,7 @@ const VoiceChatbot = () => {
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (audioContextRef.current) audioContextRef.current.close();
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     };
   }, []);
 
@@ -193,8 +196,10 @@ const VoiceChatbot = () => {
   const startRecording = async () => {
     setError('');
     setTranscript('');
+    setUserAudioUrl(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
       analyserRef.current = audioContextRef.current.createAnalyser();
       audioContextRef.current.createMediaStreamSource(stream).connect(analyserRef.current);
@@ -204,10 +209,16 @@ const VoiceChatbot = () => {
       const chunks = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
       recorder.onstop = async () => {
-        await sendAudioToBackend(new Blob(chunks, { type: 'audio/webm' }));
+        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+        // Create local URL for user audio playback
+        const localAudioUrl = URL.createObjectURL(audioBlob);
+        setUserAudioUrl(localAudioUrl);
+        
+        await sendAudioToBackend(audioBlob);
         stream.getTracks().forEach(t => t.stop());
         if (audioContextRef.current) audioContextRef.current.close();
         setBars(Array(32).fill(2));
+        streamRef.current = null;
       };
       recorder.start(100);
       setMediaRecorder(recorder);
@@ -247,13 +258,27 @@ const VoiceChatbot = () => {
         const audioUrl = URL.createObjectURL(blob);
         const msgId = Date.now();
 
+        // Add both user audio and bot response to chat history
         setChatHistory(prev => [
           ...prev,
-          { id: msgId, type: 'bot', audioUrl, timestamp: new Date() },
+          { 
+            id: msgId, 
+            type: 'user', 
+            audioUrl: userAudioUrl, // Store the user's recorded audio URL
+            timestamp: new Date(),
+            transcript: transcript 
+          },
+          { 
+            id: msgId + 1, 
+            type: 'bot', 
+            audioUrl, 
+            timestamp: new Date() 
+          },
         ]);
-        setPlayingId(msgId);
+        setPlayingId(msgId + 1);
         setIsProcessing(false);
         setTranscript('');
+        setUserAudioUrl(null);
       };
     } catch {
       setError('Failed to reach the server. Is it running on port 8000?');
@@ -341,7 +366,20 @@ const VoiceChatbot = () => {
                     <div style={msg.type === 'user' ? styles.userBubble : styles.botBubble}>
                       {msg.type === 'user' ? (
                         <>
-                          <div style={styles.bubbleText}>{msg.text}</div>
+                          {msg.text ? (
+                            <div style={styles.bubbleText}>{msg.text}</div>
+                          ) : (
+                            <div>
+                              <div style={styles.userLabel}>
+                                <span style={styles.userLabelDot} />
+                                Your voice
+                              </div>
+                              <AudioPlayer
+                                audioUrl={msg.audioUrl}
+                                onEnded={() => {}}
+                              />
+                            </div>
+                          )}
                           <div style={styles.bubbleTime}>
                             {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
@@ -620,6 +658,12 @@ const styles = {
     fontSize: 10, fontWeight: 600, letterSpacing: 0.8,
     textTransform: 'uppercase', color: '#a78bfa', marginBottom: 8,
   },
+  userLabel: {
+    display: 'flex', alignItems: 'center', gap: 5,
+    fontSize: 10, fontWeight: 600, letterSpacing: 0.8,
+    textTransform: 'uppercase', color: '#60a5fa', marginBottom: 8,
+  },
+  userLabelDot: { width: 6, height: 6, borderRadius: '50%', background: '#60a5fa', flexShrink: 0 },
   botLabelDot: { width: 6, height: 6, borderRadius: '50%', background: '#a78bfa', flexShrink: 0 },
   typingDots: { display: 'flex', gap: 4, alignItems: 'center', padding: '2px 0' },
   transcriptBar: {
