@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-// ─── Audio Player Component ───────────────────────────────────────────────────
-const AudioPlayer = ({ audioUrl, onEnded }) => {
+// ─── Audio Player Component (Reusable for both user and bot) ──────────────────
+const AudioMessage = ({ audioUrl, side, timestamp, onEnded }) => {
   const audioRef = useRef(null);
   const progressRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -9,11 +9,11 @@ const AudioPlayer = ({ audioUrl, onEnded }) => {
   const [duration, setDuration] = useState(0);
   const rafRef = useRef(null);
 
-  // Auto-play when mounted
+  // Reset and auto-cleanup when URL changes
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
-    el.play().then(() => setPlaying(true)).catch(() => {});
+    el.load();
     el.onloadedmetadata = () => setDuration(el.duration || 0);
     el.onended = () => {
       setPlaying(false);
@@ -21,8 +21,11 @@ const AudioPlayer = ({ audioUrl, onEnded }) => {
       cancelAnimationFrame(rafRef.current);
       onEnded?.();
     };
-    return () => { el.pause(); cancelAnimationFrame(rafRef.current); };
-  }, [audioUrl]);
+    return () => {
+      el.pause();
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, [audioUrl, onEnded]);
 
   // rAF-based progress ticker
   useEffect(() => {
@@ -38,8 +41,13 @@ const AudioPlayer = ({ audioUrl, onEnded }) => {
   const togglePlay = () => {
     const el = audioRef.current;
     if (!el) return;
-    if (playing) { el.pause(); setPlaying(false); }
-    else { el.play(); setPlaying(true); }
+    if (playing) {
+      el.pause();
+      setPlaying(false);
+    } else {
+      el.play();
+      setPlaying(true);
+    }
   };
 
   const seek = (e) => {
@@ -54,45 +62,49 @@ const AudioPlayer = ({ audioUrl, onEnded }) => {
   const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   const pct = duration ? (currentTime / duration) * 100 : 0;
 
+  // Different gradient colors for user vs bot
+  const gradient = side === 'user'
+    ? 'linear-gradient(135deg, #10b981, #059669)'  // Emerald green for user
+    : 'linear-gradient(135deg, #7c3aed, #4f46e5)'; // Purple for bot
+
+  const waveColor = side === 'user' ? '#34d399' : '#a78bfa';
+  const waveBg = side === 'user' ? 'rgba(52,211,153,0.2)' : 'rgba(167,139,250,0.2)';
+
   return (
-    <div style={playerStyles.wrap}>
+    <div style={audioStyles.wrap}>
       <audio ref={audioRef} src={audioUrl} preload="auto" />
 
-      {/* Play / pause */}
-      <button onClick={togglePlay} style={playerStyles.playBtn} className="play-btn">
+      <button onClick={togglePlay} style={{ ...audioStyles.playBtn, background: gradient }} className="play-btn">
         {playing ? <PauseIcon /> : <PlayIcon />}
       </button>
 
-      {/* Waveform-style progress bar */}
-      <div style={playerStyles.right}>
-        <div style={playerStyles.bars}>
-          {Array.from({ length: 28 }, (_, i) => {
-            const h = 6 + Math.abs(Math.sin(i * 0.7 + i * 0.3)) * 22;
-            const filled = (i / 28) * 100 < pct;
+      <div style={audioStyles.right}>
+        <div style={audioStyles.bars}>
+          {Array.from({ length: 24 }, (_, i) => {
+            const h = 6 + Math.abs(Math.sin(i * 0.7)) * 18;
+            const filled = (i / 24) * 100 < pct;
             return (
               <div key={i} style={{
-                ...playerStyles.wavebar,
+                ...audioStyles.wavebar,
                 height: h,
-                background: filled ? '#a78bfa' : 'rgba(167,139,250,0.2)',
+                background: filled ? waveColor : waveBg,
                 transition: 'background 0.1s',
               }} />
             );
           })}
-          {/* Invisible click overlay */}
-          <div ref={progressRef} onClick={seek} style={playerStyles.seekOverlay} />
+          <div ref={progressRef} onClick={seek} style={audioStyles.seekOverlay} />
         </div>
-        <div style={playerStyles.times}>
+        <div style={audioStyles.times}>
           <span>{fmt(currentTime)}</span>
           <span>{fmt(duration)}</span>
         </div>
       </div>
 
-      {/* Speaking pulse when playing */}
       {playing && (
-        <div style={playerStyles.pulse}>
-          <span className="dot-bounce" style={{ animationDelay: '0ms', background: '#a78bfa' }} />
-          <span className="dot-bounce" style={{ animationDelay: '140ms', background: '#a78bfa' }} />
-          <span className="dot-bounce" style={{ animationDelay: '280ms', background: '#a78bfa' }} />
+        <div style={audioStyles.pulse}>
+          <span className="dot-bounce" style={{ animationDelay: '0ms', background: waveColor }} />
+          <span className="dot-bounce" style={{ animationDelay: '140ms', background: waveColor }} />
+          <span className="dot-bounce" style={{ animationDelay: '280ms', background: waveColor }} />
         </div>
       )}
     </div>
@@ -100,71 +112,68 @@ const AudioPlayer = ({ audioUrl, onEnded }) => {
 };
 
 const PlayIcon = () => (
-  <svg width={14} height={14} viewBox="0 0 24 24" fill="#fff">
+  <svg width={12} height={12} viewBox="0 0 24 24" fill="#fff">
     <polygon points="5,3 19,12 5,21" />
   </svg>
 );
+
 const PauseIcon = () => (
-  <svg width={14} height={14} viewBox="0 0 24 24" fill="#fff">
+  <svg width={12} height={12} viewBox="0 0 24 24" fill="#fff">
     <rect x="5" y="3" width="4" height="18" rx="1" />
     <rect x="15" y="3" width="4" height="18" rx="1" />
   </svg>
 );
 
-const playerStyles = {
+const audioStyles = {
   wrap: {
-    display: 'flex', alignItems: 'center', gap: 10,
-    padding: '10px 12px',
-    background: 'rgba(139,92,246,0.1)',
-    border: '1px solid rgba(139,92,246,0.2)',
-    borderRadius: 14,
-    minWidth: 230,
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: '8px 10px',
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    minWidth: 200,
     position: 'relative',
   },
   playBtn: {
-    width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-    background: 'linear-gradient(135deg, #7c3aed, #4f46e5)',
+    width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
     border: 'none', cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    boxShadow: '0 0 12px rgba(124,58,237,0.4)',
     transition: 'transform 0.12s',
   },
-  right: { flex: 1, display: 'flex', flexDirection: 'column', gap: 3 },
+  right: { flex: 1, display: 'flex', flexDirection: 'column', gap: 2 },
   bars: {
-    display: 'flex', alignItems: 'flex-end', gap: 2, height: 32,
+    display: 'flex', alignItems: 'flex-end', gap: 2, height: 28,
     position: 'relative', cursor: 'pointer',
   },
-  wavebar: { width: 3, borderRadius: 2, flexShrink: 0 },
+  wavebar: { width: 2.5, borderRadius: 2, flexShrink: 0 },
   seekOverlay: {
     position: 'absolute', inset: 0, cursor: 'pointer',
   },
   times: {
     display: 'flex', justifyContent: 'space-between',
-    fontSize: 10, color: 'rgba(255,255,255,0.35)',
+    fontSize: 9, color: 'rgba(255,255,255,0.35)',
     fontVariantNumeric: 'tabular-nums',
   },
-  pulse: { display: 'flex', alignItems: 'center', gap: 3, marginLeft: 2 },
+  pulse: { display: 'flex', alignItems: 'center', gap: 2, marginLeft: 2 },
 };
 
 // ─── Main Chatbot ─────────────────────────────────────────────────────────────
 const VoiceChatbot = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [transcript, setTranscript] = useState('');
   const [chatHistory, setChatHistory] = useState([]);
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [recordingTime, setRecordingTime] = useState(0);
   const [error, setError] = useState('');
   const [bars, setBars] = useState(Array(32).fill(2));
   const [playingId, setPlayingId] = useState(null);
-  const [userAudioUrl, setUserAudioUrl] = useState(null); // For user's recorded audio
+  const [pendingUserMessage, setPendingUserMessage] = useState(null); // Track user message being processed
 
   const recordingTimerRef = useRef(null);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
   const chatEndRef = useRef(null);
-  const streamRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -175,7 +184,6 @@ const VoiceChatbot = () => {
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (audioContextRef.current) audioContextRef.current.close();
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     };
   }, []);
 
@@ -195,11 +203,8 @@ const VoiceChatbot = () => {
 
   const startRecording = async () => {
     setError('');
-    setTranscript('');
-    setUserAudioUrl(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
       analyserRef.current = audioContextRef.current.createAnalyser();
       audioContextRef.current.createMediaStreamSource(stream).connect(analyserRef.current);
@@ -207,19 +212,38 @@ const VoiceChatbot = () => {
 
       const recorder = new MediaRecorder(stream);
       const chunks = [];
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      
+      recorder.ondataavailable = (e) => { 
+        if (e.data.size > 0) chunks.push(e.data); 
+      };
+      
       recorder.onstop = async () => {
         const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-        // Create local URL for user audio playback
-        const localAudioUrl = URL.createObjectURL(audioBlob);
-        setUserAudioUrl(localAudioUrl);
         
-        await sendAudioToBackend(audioBlob);
+        // Create user message with audio URL immediately
+        const userAudioUrl = URL.createObjectURL(audioBlob);
+        const userMsgId = Date.now();
+        const userMessage = {
+          id: userMsgId,
+          type: 'user',
+          audioUrl: userAudioUrl,
+          timestamp: new Date(),
+          isPending: true, // Mark as pending until API responds
+        };
+        
+        // Add user message to chat immediately
+        setChatHistory(prev => [...prev, userMessage]);
+        setPendingUserMessage(userMessage);
+        
+        // Stop visualization and cleanup
         stream.getTracks().forEach(t => t.stop());
         if (audioContextRef.current) audioContextRef.current.close();
         setBars(Array(32).fill(2));
-        streamRef.current = null;
+        
+        // Send to backend
+        await sendAudioToBackend(audioBlob, userMsgId);
       };
+      
       recorder.start(100);
       setMediaRecorder(recorder);
       setIsRecording(true);
@@ -240,7 +264,7 @@ const VoiceChatbot = () => {
     }
   };
 
-  const sendAudioToBackend = async (audioBlob) => {
+  const sendAudioToBackend = async (audioBlob, userMsgId) => {
     try {
       const reader = new FileReader();
       reader.readAsDataURL(audioBlob);
@@ -251,44 +275,58 @@ const VoiceChatbot = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ base64: base64Audio, extension: '.wav' }),
         });
+        
         if (!response.ok) throw new Error('Server error');
 
-        // Convert response stream → object URL for the in-chat player
-        const blob = await response.blob();
-        const audioUrl = URL.createObjectURL(blob);
-        const msgId = Date.now();
+        // Convert response stream → object URL for bot audio
+        const botBlob = await response.blob();
+        const botAudioUrl = URL.createObjectURL(botBlob);
+        const botMsgId = Date.now();
 
-        // Add both user audio and bot response to chat history
-        setChatHistory(prev => [
-          ...prev,
-          { 
-            id: msgId, 
-            type: 'user', 
-            audioUrl: userAudioUrl, // Store the user's recorded audio URL
-            timestamp: new Date(),
-            transcript: transcript 
-          },
-          { 
-            id: msgId + 1, 
-            type: 'bot', 
-            audioUrl, 
-            timestamp: new Date() 
-          },
-        ]);
-        setPlayingId(msgId + 1);
+        // Update user message to remove pending status and add bot response
+        setChatHistory(prev => {
+          const updatedHistory = prev.map(msg => 
+            msg.id === userMsgId ? { ...msg, isPending: false } : msg
+          );
+          return [
+            ...updatedHistory,
+            { 
+              id: botMsgId, 
+              type: 'bot', 
+              audioUrl: botAudioUrl, 
+              timestamp: new Date(),
+              isPending: false
+            },
+          ];
+        });
+        
+        setPlayingId(botMsgId);
         setIsProcessing(false);
-        setTranscript('');
-        setUserAudioUrl(null);
+        setPendingUserMessage(null);
       };
-    } catch {
+    } catch (error) {
+      console.error('API Error:', error);
       setError('Failed to reach the server. Is it running on port 8000?');
       setIsProcessing(false);
+      
+      // Update user message to show error status
+      setChatHistory(prev => prev.map(msg => 
+        msg.id === userMsgId ? { ...msg, isPending: false, hasError: true } : msg
+      ));
+      setPendingUserMessage(null);
     }
   };
 
   const handleUserQuestion = (text) => {
     if (!text.trim()) return;
-    setChatHistory(prev => [...prev, { id: Date.now(), type: 'user', text, timestamp: new Date() }]);
+    setChatHistory(prev => [...prev, { 
+      id: Date.now(), 
+      type: 'user', 
+      text, 
+      audioUrl: null,
+      timestamp: new Date(),
+      isPending: false
+    }]);
   };
 
   const formatTime = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -361,52 +399,60 @@ const VoiceChatbot = () => {
                   <div key={msg.id}
                     style={{ ...styles.msgRow, justifyContent: msg.type === 'user' ? 'flex-end' : 'flex-start' }}
                     className="msg-appear">
+                    
+                    {/* Bot Avatar (left side) */}
                     {msg.type === 'bot' && <div style={styles.botAvatar}>TS</div>}
 
+                    {/* Message Bubble */}
                     <div style={msg.type === 'user' ? styles.userBubble : styles.botBubble}>
                       {msg.type === 'user' ? (
                         <>
-                          {msg.text ? (
-                            <div style={styles.bubbleText}>{msg.text}</div>
+                          <div style={styles.userLabel}>
+                            <span style={styles.userLabelDot} />
+                            You {msg.isPending && <span style={styles.pendingBadge}>• Sending...</span>}
+                            {msg.hasError && <span style={styles.errorBadge}>• Failed</span>}
+                          </div>
+                          {/* User Audio Player */}
+                          {msg.audioUrl ? (
+                            <AudioMessage
+                              audioUrl={msg.audioUrl}
+                              side="user"
+                              timestamp={msg.timestamp}
+                              onEnded={() => setPlayingId(null)}
+                            />
                           ) : (
-                            <div>
-                              <div style={styles.userLabel}>
-                                <span style={styles.userLabelDot} />
-                                Your voice
-                              </div>
-                              <AudioPlayer
-                                audioUrl={msg.audioUrl}
-                                onEnded={() => {}}
-                              />
-                            </div>
+                            <div style={styles.bubbleText}>{msg.text}</div>
                           )}
-                          <div style={styles.bubbleTime}>
+                          <div style={{ ...styles.bubbleTime, marginTop: 6 }}>
                             {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
                         </>
                       ) : (
-                        /* Bot message — in-chat audio player */
-                        <div>
+                        <>
                           <div style={styles.botLabel}>
                             <span style={styles.botLabelDot} />
                             Voice response
                           </div>
-                          <AudioPlayer
+                          {/* Bot Audio Player */}
+                          <AudioMessage
                             audioUrl={msg.audioUrl}
+                            side="bot"
+                            timestamp={msg.timestamp}
                             onEnded={() => setPlayingId(null)}
                           />
                           <div style={{ ...styles.bubbleTime, marginTop: 6 }}>
                             {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
-                        </div>
+                        </>
                       )}
                     </div>
 
+                    {/* User Avatar (right side) */}
                     {msg.type === 'user' && <div style={styles.userAvatarSmall}>You</div>}
                   </div>
                 ))}
 
-                {isProcessing && (
+                {isProcessing && !pendingUserMessage && (
                   <div style={{ ...styles.msgRow, justifyContent: 'flex-start' }} className="msg-appear">
                     <div style={styles.botAvatar}>TS</div>
                     <div style={styles.botBubble}>
@@ -422,14 +468,6 @@ const VoiceChatbot = () => {
             )}
             <div ref={chatEndRef} />
           </div>
-
-          {/* Transcript preview */}
-          {transcript && (
-            <div style={styles.transcriptBar} className="fade-in">
-              <span style={styles.transcriptLabel}>Heard:</span>
-              <span style={styles.transcriptText}>{transcript}</span>
-            </div>
-          )}
 
           {/* Error */}
           {error && (
@@ -642,41 +680,42 @@ const styles = {
     border: '1px solid rgba(255,255,255,0.08)',
     borderRadius: '16px 16px 16px 4px',
     padding: '10px 14px',
-    maxWidth: 460,
+    maxWidth: 420,
   },
   userBubble: {
-    background: 'linear-gradient(135deg, rgba(124,58,237,0.7), rgba(79,70,229,0.7))',
-    border: '1px solid rgba(139,92,246,0.3)',
+    background: 'rgba(16,185,129,0.1)',
+    border: '1px solid rgba(16,185,129,0.2)',
     borderRadius: '16px 16px 4px 16px',
     padding: '10px 14px',
-    maxWidth: 460,
+    maxWidth: 420,
   },
   bubbleText: { fontSize: 14, color: 'rgba(255,255,255,0.85)', lineHeight: 1.6 },
-  bubbleTime: { fontSize: 10, color: 'rgba(255,255,255,0.28)', marginTop: 4, textAlign: 'right' },
+  bubbleTime: { fontSize: 10, color: 'rgba(255,255,255,0.28)', textAlign: 'right' },
   botLabel: {
     display: 'flex', alignItems: 'center', gap: 5,
     fontSize: 10, fontWeight: 600, letterSpacing: 0.8,
     textTransform: 'uppercase', color: '#a78bfa', marginBottom: 8,
   },
+  botLabelDot: { width: 6, height: 6, borderRadius: '50%', background: '#a78bfa', flexShrink: 0 },
   userLabel: {
     display: 'flex', alignItems: 'center', gap: 5,
     fontSize: 10, fontWeight: 600, letterSpacing: 0.8,
-    textTransform: 'uppercase', color: '#60a5fa', marginBottom: 8,
+    textTransform: 'uppercase', color: '#34d399', marginBottom: 8,
   },
-  userLabelDot: { width: 6, height: 6, borderRadius: '50%', background: '#60a5fa', flexShrink: 0 },
-  botLabelDot: { width: 6, height: 6, borderRadius: '50%', background: '#a78bfa', flexShrink: 0 },
+  userLabelDot: { width: 6, height: 6, borderRadius: '50%', background: '#34d399', flexShrink: 0 },
+  pendingBadge: {
+    fontSize: 9,
+    fontWeight: 400,
+    color: '#fbbf24',
+    marginLeft: 4,
+  },
+  errorBadge: {
+    fontSize: 9,
+    fontWeight: 400,
+    color: '#f87171',
+    marginLeft: 4,
+  },
   typingDots: { display: 'flex', gap: 4, alignItems: 'center', padding: '2px 0' },
-  transcriptBar: {
-    margin: '0 28px 8px',
-    padding: '10px 14px',
-    background: 'rgba(59,130,246,0.08)',
-    border: '1px solid rgba(59,130,246,0.2)',
-    borderRadius: 12,
-    display: 'flex', gap: 8, alignItems: 'center',
-    fontSize: 13,
-  },
-  transcriptLabel: { color: '#60a5fa', fontWeight: 600, flexShrink: 0 },
-  transcriptText: { color: 'rgba(255,255,255,0.6)' },
   errorBar: {
     margin: '0 28px 8px',
     padding: '10px 14px',
@@ -744,7 +783,7 @@ const css = `
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-  .play-btn:hover { transform: scale(1.1); }
+  .play-btn:hover { transform: scale(1.08); }
   .play-btn:active { transform: scale(0.95); }
   .suggestion-btn:hover {
     background: rgba(139,92,246,0.1) !important;
@@ -758,13 +797,13 @@ const css = `
   .msg-appear { animation: msgIn 0.25s ease forwards; }
   @keyframes msgIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   .dot-bounce {
-    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
     background: rgba(167,139,250,0.7);
     animation: dotBounce 1.2s infinite ease-in-out;
   }
   @keyframes dotBounce {
     0%, 80%, 100% { transform: translateY(0); }
-    40% { transform: translateY(-8px); }
+    40% { transform: translateY(-6px); }
   }
   .pulse-dot {
     animation: pulseDot 1.2s infinite ease-in-out;
