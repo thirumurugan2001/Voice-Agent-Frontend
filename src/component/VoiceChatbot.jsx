@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-// ─── Audio Visualizer GIF (Canvas-based animated bars) ───────────────────────
+// ─── Audio Visualizer ─────────────────────────────────────────────────────────
 const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
   const canvasRef = useRef(null);
   const animRef = useRef(null);
-  const barsRef = useRef(Array.from({ length: 20 }, (_, i) => ({
+  const barsRef = useRef(Array.from({ length: 20 }, () => ({
     height: 4 + Math.random() * 20,
     target: 4 + Math.random() * 20,
     speed: 0.08 + Math.random() * 0.12,
@@ -28,15 +28,14 @@ const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
 
     const animate = () => {
       ctx.clearRect(0, 0, W, H);
-      const barW = 3;
-      const gap = 2;
+      const barW = 3, gap = 2;
       const totalW = bars.length * (barW + gap) - gap;
       const startX = (W - totalW) / 2;
 
       bars.forEach((bar, i) => {
         if (isPlaying) {
           bar.target = 4 + Math.abs(Math.sin(t * 2.5 + bar.phase + i * 0.4)) * 22
-                        + Math.abs(Math.sin(t * 1.3 + i * 0.7)) * 8;
+            + Math.abs(Math.sin(t * 1.3 + i * 0.7)) * 8;
         } else {
           bar.target = 3 + Math.abs(Math.sin(bar.phase + i * 0.3)) * 4;
         }
@@ -45,7 +44,6 @@ const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
         const x = startX + i * (barW + gap);
         const h = bar.height;
         const y = (H - h) / 2;
-
         const grad = ctx.createLinearGradient(x, y, x, y + h);
         if (isPlaying) {
           grad.addColorStop(0, primaryColor);
@@ -54,7 +52,6 @@ const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
           grad.addColorStop(0, dimColor);
           grad.addColorStop(1, dimColor);
         }
-
         ctx.beginPath();
         ctx.roundRect(x, y, barW, h, 2);
         ctx.fillStyle = grad;
@@ -67,111 +64,105 @@ const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
 
     animate();
     return () => cancelAnimationFrame(animRef.current);
-  }, [isPlaying, side, isDarkMode, primaryColor, secondaryColor, dimColor]);
+  }, [isPlaying, primaryColor, secondaryColor, dimColor]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={96}
-      height={36}
-      style={{ display: 'block', borderRadius: 6 }}
-    />
+    <canvas ref={canvasRef} width={96} height={36} style={{ display: 'block', borderRadius: 6 }} />
   );
 };
 
-// ─── Audio Player Component ───────────────────────────────────────────────────
-const AudioMessage = ({ audioUrl, side, timestamp, onEnded, isDarkMode }) => {
+// ─── Audio Player (Controlled) ────────────────────────────────────────────────
+// isPlaying is fully controlled by parent via playingId
+// onRequestPlay(id)  → called when user presses play  (parent sets playingId = id)
+// onRequestPause()   → called when user presses pause (parent sets playingId = null)
+// onEnded()          → called when audio finishes     (parent sets playingId = null)
+const AudioMessage = ({
+  msgId, audioUrl, side, timestamp,
+  isPlaying, onRequestPlay, onRequestPause, onEnded,
+  isDarkMode,
+}) => {
   const audioRef = useRef(null);
   const progressRef = useRef(null);
-  const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const rafRef = useRef(null);
 
+  // ── Sync audio element with controlled isPlaying ──
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
-    setPlaying(false);
-    setCurrent(0);
-    setDuration(0);
-    el.load();
+    if (isPlaying) {
+      el.play().catch(e => console.warn('Playback failed:', e));
+    } else {
+      if (!el.paused) el.pause();
+    }
+  }, [isPlaying]);
 
-    // Track whether we've already done the seek-to-end trick
-    let didSeek = false;
-
-    const trySetDuration = () => {
-      const dur = el.duration;
-      if (isFinite(dur) && !isNaN(dur) && dur > 0) {
-        setDuration(dur);
-        return true;
-      }
-      return false;
-    };
-
-    const handleLoadedMetadata = () => {
-      if (!trySetDuration() && !didSeek) {
-        // webm blobs from MediaRecorder report Infinity duration.
-        // Seeking to a huge timestamp forces the browser to scan the
-        // entire blob and recalculate the real duration.
-        didSeek = true;
-        el.currentTime = 1e10;
-      }
-    };
-
-    const handleSeeked = () => {
-      if (didSeek) {
-        // After the forced seek, duration is now known — reset to start
-        trySetDuration();
-        el.currentTime = 0;
-        didSeek = false;
-      }
-    };
-
-    const handleDurationChange = () => {
-      trySetDuration();
-    };
-
-    el.addEventListener('loadedmetadata', handleLoadedMetadata);
-    el.addEventListener('durationchange', handleDurationChange);
-    el.addEventListener('seeked', handleSeeked);
-
-    el.onended = () => {
-      setPlaying(false);
-      setCurrent(0);
-      cancelAnimationFrame(rafRef.current);
-      onEnded?.();
-    };
-
-    return () => {
-      el.pause();
-      el.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      el.removeEventListener('durationchange', handleDurationChange);
-      el.removeEventListener('seeked', handleSeeked);
-      cancelAnimationFrame(rafRef.current);
-    };
-  }, [audioUrl, onEnded]);
-
+  // ── RAF progress tracking ──
   useEffect(() => {
     const tick = () => {
       if (audioRef.current && isFinite(audioRef.current.currentTime))
         setCurrent(audioRef.current.currentTime);
       rafRef.current = requestAnimationFrame(tick);
     };
-    if (playing) rafRef.current = requestAnimationFrame(tick);
+    if (isPlaying) rafRef.current = requestAnimationFrame(tick);
     else cancelAnimationFrame(rafRef.current);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [playing]);
+  }, [isPlaying]);
 
-  const togglePlay = () => {
+  // ── Load audio + fix Infinity duration for webm blobs ──
+  useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
-    if (playing) { el.pause(); setPlaying(false); }
-    else { el.play().catch(e => console.warn('Playback failed:', e)); setPlaying(true); }
+    setCurrent(0);
+    setDuration(0);
+    el.load();
+
+    let didSeek = false;
+    const trySetDuration = () => {
+      const dur = el.duration;
+      if (isFinite(dur) && !isNaN(dur) && dur > 0) { setDuration(dur); return true; }
+      return false;
+    };
+    const handleLoadedMetadata = () => {
+      if (!trySetDuration() && !didSeek) { didSeek = true; el.currentTime = 1e10; }
+    };
+    const handleSeeked = () => {
+      if (didSeek) { trySetDuration(); el.currentTime = 0; didSeek = false; }
+    };
+    const handleDurationChange = () => trySetDuration();
+    const handleEnded = () => {
+      setCurrent(0);
+      cancelAnimationFrame(rafRef.current);
+      onEnded?.();
+    };
+
+    el.addEventListener('loadedmetadata', handleLoadedMetadata);
+    el.addEventListener('durationchange', handleDurationChange);
+    el.addEventListener('seeked', handleSeeked);
+    el.addEventListener('ended', handleEnded);
+
+    return () => {
+      el.pause();
+      el.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      el.removeEventListener('durationchange', handleDurationChange);
+      el.removeEventListener('seeked', handleSeeked);
+      el.removeEventListener('ended', handleEnded);
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, [audioUrl]);
+
+  const togglePlay = () => {
+    if (isPlaying) {
+      onRequestPause();
+    } else {
+      onRequestPlay(msgId);
+    }
   };
 
   const seek = (e) => {
     const el = audioRef.current;
-    if (!el || !duration || duration <= 0) return;
+    if (!el || !duration) return;
     const rect = progressRef.current.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     el.currentTime = pct * duration;
@@ -196,16 +187,11 @@ const AudioMessage = ({ audioUrl, side, timestamp, onEnded, isDarkMode }) => {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10,
-      padding: '10px 12px',
-      borderRadius: 14,
-      minWidth: 220,
-      background: bgColor,
-      border: `1px solid ${borderColor}`,
-      position: 'relative',
+      padding: '10px 12px', borderRadius: 14, minWidth: 220,
+      background: bgColor, border: `1px solid ${borderColor}`, position: 'relative',
     }}>
       <audio ref={audioRef} src={audioUrl} preload="auto" />
 
-      {/* Play/Pause Button */}
       <button
         onClick={togglePlay}
         style={{
@@ -213,18 +199,17 @@ const AudioMessage = ({ audioUrl, side, timestamp, onEnded, isDarkMode }) => {
           background: gradient, border: 'none', cursor: 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           transition: 'transform 0.12s',
-          boxShadow: playing ? `0 0 0 4px ${side === 'user' ? 'rgba(16,185,129,0.2)' : 'rgba(124,58,237,0.2)'}` : 'none',
+          boxShadow: isPlaying
+            ? `0 0 0 4px ${side === 'user' ? 'rgba(16,185,129,0.2)' : 'rgba(124,58,237,0.2)'}`
+            : 'none',
         }}
       >
-        {playing ? <PauseIcon /> : <PlayIcon />}
+        {isPlaying ? <PauseIcon /> : <PlayIcon />}
       </button>
 
-      {/* Visualizer + Progress */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {/* GIF-style animated visualizer */}
-        <AudioVisualizer isPlaying={playing} side={side} isDarkMode={isDarkMode} />
+        <AudioVisualizer isPlaying={isPlaying} side={side} isDarkMode={isDarkMode} />
 
-        {/* Progress bar */}
         <div
           ref={progressRef}
           onClick={seek}
@@ -240,7 +225,6 @@ const AudioMessage = ({ audioUrl, side, timestamp, onEnded, isDarkMode }) => {
           }} />
         </div>
 
-        {/* Time */}
         <div style={{
           display: 'flex', justifyContent: 'space-between',
           fontSize: 10, color: textColor, fontVariantNumeric: 'tabular-nums',
@@ -254,9 +238,7 @@ const AudioMessage = ({ audioUrl, side, timestamp, onEnded, isDarkMode }) => {
 };
 
 const PlayIcon = () => (
-  <svg width={11} height={11} viewBox="0 0 24 24" fill="#fff">
-    <polygon points="5,3 19,12 5,21" />
-  </svg>
+  <svg width={11} height={11} viewBox="0 0 24 24" fill="#fff"><polygon points="5,3 19,12 5,21" /></svg>
 );
 const PauseIcon = () => (
   <svg width={11} height={11} viewBox="0 0 24 24" fill="#fff">
@@ -265,7 +247,7 @@ const PauseIcon = () => (
   </svg>
 );
 
-// ─── Fullscreen Hook ──────────────────────────────────────────────────────────
+// ─── Hooks ────────────────────────────────────────────────────────────────────
 const useFullscreen = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const toggleFullscreen = () => {
@@ -285,7 +267,6 @@ const useFullscreen = () => {
   return { isFullscreen, toggleFullscreen };
 };
 
-// ─── Dark Mode Hook ───────────────────────────────────────────────────────────
 const useDarkMode = () => {
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem('darkMode');
@@ -298,7 +279,6 @@ const useDarkMode = () => {
   return { isDarkMode, toggleDarkMode: () => setIsDarkMode(p => !p) };
 };
 
-// ─── Mobile Detection Hook ────────────────────────────────────────────────────
 const useMobileDetect = () => {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -319,7 +299,11 @@ const VoiceChatbot = () => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [error, setError] = useState('');
   const [bars, setBars] = useState(Array(32).fill(2));
+
+  // ── Single source of truth for which message is playing ──
+  // null = nothing playing, otherwise = msg.id of the currently playing message
   const [playingId, setPlayingId] = useState(null);
+
   const [pendingUserMessage, setPendingUserMessage] = useState(null);
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const { isFullscreen, toggleFullscreen } = useFullscreen();
@@ -344,6 +328,21 @@ const VoiceChatbot = () => {
     };
   }, []);
 
+  // ── Audio mutual exclusion handlers ──
+  // When a player requests to play, we set it as the only playing ID.
+  // Any other player that sees its ID !== playingId will pause itself.
+  const handleRequestPlay = (id) => {
+    setPlayingId(id);
+  };
+
+  const handleRequestPause = () => {
+    setPlayingId(null);
+  };
+
+  const handleEnded = () => {
+    setPlayingId(null);
+  };
+
   const startVisualization = () => {
     if (!analyserRef.current) return;
     const analyser = analyserRef.current;
@@ -359,6 +358,8 @@ const VoiceChatbot = () => {
   };
 
   const startRecording = async () => {
+    // Stop any playing audio before recording
+    setPlayingId(null);
     setError('');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -421,6 +422,7 @@ const VoiceChatbot = () => {
           const updated = prev.map(msg => msg.id === userMsgId ? { ...msg, isPending: false } : msg);
           return [...updated, { id: botMsgId, type: 'bot', audioUrl: botAudioUrl, timestamp: new Date(), isPending: false }];
         });
+        // Auto-play the bot response — stops any other audio first
         setPlayingId(botMsgId);
         setIsProcessing(false);
         setPendingUserMessage(null);
@@ -489,11 +491,7 @@ const VoiceChatbot = () => {
       <div style={{ ...styles.sidebarLabel, color: theme.textMuted }}>Try asking</div>
       <div style={styles.suggestionsList}>
         {suggestions.map((s) => (
-          <button
-            key={s.id}
-            style={{ ...styles.suggestionBtn, borderColor: theme.border, color: theme.textSecondary }}
-            disabled
-          >
+          <button key={s.id} style={{ ...styles.suggestionBtn, borderColor: theme.border, color: theme.textSecondary }} disabled>
             <span style={styles.suggestionIcon}>↗</span>
             <span style={styles.suggestionText}>{s.text}</span>
           </button>
@@ -615,10 +613,14 @@ const VoiceChatbot = () => {
                             {msg.hasError && <span style={styles.errorBadge}>• Failed</span>}
                           </div>
                           <AudioMessage
+                            msgId={msg.id}
                             audioUrl={msg.audioUrl}
                             side="user"
                             timestamp={msg.timestamp}
-                            onEnded={() => setPlayingId(null)}
+                            isPlaying={playingId === msg.id}
+                            onRequestPlay={handleRequestPlay}
+                            onRequestPause={handleRequestPause}
+                            onEnded={handleEnded}
                             isDarkMode={isDarkMode}
                           />
                           <div style={{ ...styles.bubbleTime, color: theme.textMuted }}>
@@ -632,10 +634,14 @@ const VoiceChatbot = () => {
                             Voice response
                           </div>
                           <AudioMessage
+                            msgId={msg.id}
                             audioUrl={msg.audioUrl}
                             side="bot"
                             timestamp={msg.timestamp}
-                            onEnded={() => setPlayingId(null)}
+                            isPlaying={playingId === msg.id}
+                            onRequestPlay={handleRequestPlay}
+                            onRequestPause={handleRequestPause}
+                            onEnded={handleEnded}
                             isDarkMode={isDarkMode}
                           />
                           <div style={{ ...styles.bubbleTime, color: theme.textMuted }}>
@@ -783,9 +789,7 @@ const styles = {
   closeBtn: {
     background: 'transparent', border: 'none', fontSize: 20, cursor: 'pointer', color: '#666', padding: 4,
   },
-  layout: {
-    display: 'flex', width: '100%', height: '100vh', position: 'relative',
-  },
+  layout: { display: 'flex', width: '100%', height: '100vh', position: 'relative' },
   sidebar: {
     width: 280, flexShrink: 0, padding: '24px 16px',
     display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto',
@@ -951,10 +955,6 @@ const css = `
   @media (max-width: 768px) {
     .headerTitle { font-size: 15px !important; }
     .headerSub { display: none !important; }
-    .botBubble, .userBubble { max-width: 280px !important; padding: 8px 10px !important; }
-  }
-  @media (max-width: 480px) {
-    .botBubble, .userBubble { max-width: 240px !important; }
   }
 `;
 
