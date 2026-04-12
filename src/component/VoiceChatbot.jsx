@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 
 // ─── Audio Player Component (Reusable for both user and bot) ──────────────────
-const AudioMessage = ({ audioUrl, side, timestamp, onEnded }) => {
+const AudioMessage = ({ audioUrl, side, timestamp, onEnded, isDarkMode }) => {
   const audioRef = useRef(null);
   const progressRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -9,28 +9,44 @@ const AudioMessage = ({ audioUrl, side, timestamp, onEnded }) => {
   const [duration, setDuration] = useState(0);
   const rafRef = useRef(null);
 
-  // Reset and auto-cleanup when URL changes
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
+    
+    setPlaying(false);
+    setCurrent(0);
+    setDuration(0);
     el.load();
-    el.onloadedmetadata = () => setDuration(el.duration || 0);
+    
+    const handleLoadedMetadata = () => {
+      const dur = el.duration;
+      if (isFinite(dur) && !isNaN(dur)) {
+        setDuration(dur);
+      } else {
+        setDuration(0);
+      }
+    };
+    
+    el.addEventListener('loadedmetadata', handleLoadedMetadata);
     el.onended = () => {
       setPlaying(false);
       setCurrent(0);
       cancelAnimationFrame(rafRef.current);
       onEnded?.();
     };
+    
     return () => {
       el.pause();
+      el.removeEventListener('loadedmetadata', handleLoadedMetadata);
       cancelAnimationFrame(rafRef.current);
     };
   }, [audioUrl, onEnded]);
 
-  // rAF-based progress ticker
   useEffect(() => {
     const tick = () => {
-      if (audioRef.current) setCurrent(audioRef.current.currentTime);
+      if (audioRef.current && isFinite(audioRef.current.currentTime)) {
+        setCurrent(audioRef.current.currentTime);
+      }
       rafRef.current = requestAnimationFrame(tick);
     };
     if (playing) rafRef.current = requestAnimationFrame(tick);
@@ -45,33 +61,40 @@ const AudioMessage = ({ audioUrl, side, timestamp, onEnded }) => {
       el.pause();
       setPlaying(false);
     } else {
-      el.play();
+      el.play().catch(err => console.warn('Playback failed:', err));
       setPlaying(true);
     }
   };
 
   const seek = (e) => {
     const el = audioRef.current;
-    if (!el || !duration) return;
+    if (!el || !duration || duration <= 0) return;
     const rect = progressRef.current.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     el.currentTime = pct * duration;
     setCurrent(el.currentTime);
   };
 
-  const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-  const pct = duration ? (currentTime / duration) * 100 : 0;
+  const fmt = (s) => {
+    if (!isFinite(s) || isNaN(s) || s < 0) return '00:00';
+    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  };
+  
+  const pct = (duration > 0 && isFinite(duration)) ? (currentTime / duration) * 100 : 0;
 
-  // Different gradient colors for user vs bot
   const gradient = side === 'user'
-    ? 'linear-gradient(135deg, #10b981, #059669)'  // Emerald green for user
-    : 'linear-gradient(135deg, #7c3aed, #4f46e5)'; // Purple for bot
+    ? 'linear-gradient(135deg, #10b981, #059669)'
+    : 'linear-gradient(135deg, #7c3aed, #4f46e5)';
 
   const waveColor = side === 'user' ? '#34d399' : '#a78bfa';
   const waveBg = side === 'user' ? 'rgba(52,211,153,0.2)' : 'rgba(167,139,250,0.2)';
 
+  const textColor = isDarkMode ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)';
+  const bgColor = isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)';
+  const borderColor = isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+
   return (
-    <div style={audioStyles.wrap}>
+    <div style={{ ...audioStyles.wrap, background: bgColor, borderColor: borderColor }}>
       <audio ref={audioRef} src={audioUrl} preload="auto" />
 
       <button onClick={togglePlay} style={{ ...audioStyles.playBtn, background: gradient }} className="play-btn">
@@ -94,9 +117,9 @@ const AudioMessage = ({ audioUrl, side, timestamp, onEnded }) => {
           })}
           <div ref={progressRef} onClick={seek} style={audioStyles.seekOverlay} />
         </div>
-        <div style={audioStyles.times}>
+        <div style={{ ...audioStyles.times, color: textColor }}>
           <span>{fmt(currentTime)}</span>
-          <span>{fmt(duration)}</span>
+          <span>{duration > 0 ? fmt(duration) : '--:--'}</span>
         </div>
       </div>
 
@@ -128,11 +151,10 @@ const audioStyles = {
   wrap: {
     display: 'flex', alignItems: 'center', gap: 8,
     padding: '8px 10px',
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.08)',
     borderRadius: 12,
     minWidth: 200,
     position: 'relative',
+    border: '1px solid',
   },
   playBtn: {
     width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
@@ -151,10 +173,56 @@ const audioStyles = {
   },
   times: {
     display: 'flex', justifyContent: 'space-between',
-    fontSize: 9, color: 'rgba(255,255,255,0.35)',
+    fontSize: 9,
     fontVariantNumeric: 'tabular-nums',
   },
   pulse: { display: 'flex', alignItems: 'center', gap: 2, marginLeft: 2 },
+};
+
+// ─── Fullscreen Hook ──────────────────────────────────────────────────────────
+const useFullscreen = () => {
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => {
+        console.warn(`Error attempting to enable fullscreen: ${err.message}`);
+      });
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen();
+      setIsFullscreen(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  return { isFullscreen, toggleFullscreen };
+};
+
+// ─── Dark Mode Hook ──────────────────────────────────────────────────────────
+const useDarkMode = () => {
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('darkMode');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('darkMode', isDarkMode);
+    if (isDarkMode) {
+      document.documentElement.style.backgroundColor = '#0d0d14';
+    } else {
+      document.documentElement.style.backgroundColor = '#f3f4f6';
+    }
+  }, [isDarkMode]);
+
+  return { isDarkMode, toggleDarkMode: () => setIsDarkMode(prev => !prev) };
 };
 
 // ─── Main Chatbot ─────────────────────────────────────────────────────────────
@@ -167,7 +235,9 @@ const VoiceChatbot = () => {
   const [error, setError] = useState('');
   const [bars, setBars] = useState(Array(32).fill(2));
   const [playingId, setPlayingId] = useState(null);
-  const [pendingUserMessage, setPendingUserMessage] = useState(null); // Track user message being processed
+  const [pendingUserMessage, setPendingUserMessage] = useState(null);
+  const { isFullscreen, toggleFullscreen } = useFullscreen();
+  const { isDarkMode, toggleDarkMode } = useDarkMode();
 
   const recordingTimerRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -220,7 +290,6 @@ const VoiceChatbot = () => {
       recorder.onstop = async () => {
         const audioBlob = new Blob(chunks, { type: 'audio/webm' });
         
-        // Create user message with audio URL immediately
         const userAudioUrl = URL.createObjectURL(audioBlob);
         const userMsgId = Date.now();
         const userMessage = {
@@ -228,19 +297,16 @@ const VoiceChatbot = () => {
           type: 'user',
           audioUrl: userAudioUrl,
           timestamp: new Date(),
-          isPending: true, // Mark as pending until API responds
+          isPending: true,
         };
         
-        // Add user message to chat immediately
         setChatHistory(prev => [...prev, userMessage]);
         setPendingUserMessage(userMessage);
         
-        // Stop visualization and cleanup
         stream.getTracks().forEach(t => t.stop());
         if (audioContextRef.current) audioContextRef.current.close();
         setBars(Array(32).fill(2));
         
-        // Send to backend
         await sendAudioToBackend(audioBlob, userMsgId);
       };
       
@@ -270,7 +336,7 @@ const VoiceChatbot = () => {
       reader.readAsDataURL(audioBlob);
       reader.onloadend = async () => {
         const base64Audio = reader.result.split(',')[1];
-        const response = await fetch('http://localhost:8000/chatbot/voice/', {
+        const response = await fetch('https://voice-agent-teal-eight.vercel.app/chatbot/voice/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ base64: base64Audio, extension: '.wav' }),
@@ -278,12 +344,10 @@ const VoiceChatbot = () => {
         
         if (!response.ok) throw new Error('Server error');
 
-        // Convert response stream → object URL for bot audio
         const botBlob = await response.blob();
         const botAudioUrl = URL.createObjectURL(botBlob);
         const botMsgId = Date.now();
 
-        // Update user message to remove pending status and add bot response
         setChatHistory(prev => {
           const updatedHistory = prev.map(msg => 
             msg.id === userMsgId ? { ...msg, isPending: false } : msg
@@ -306,10 +370,9 @@ const VoiceChatbot = () => {
       };
     } catch (error) {
       console.error('API Error:', error);
-      setError('Failed to reach the server. Is it running on port 8000?');
+      setError('Failed to reach the server.');
       setIsProcessing(false);
       
-      // Update user message to show error status
       setChatHistory(prev => prev.map(msg => 
         msg.id === userMsgId ? { ...msg, isPending: false, hasError: true } : msg
       ));
@@ -317,53 +380,80 @@ const VoiceChatbot = () => {
     }
   };
 
-  const handleUserQuestion = (text) => {
-    if (!text.trim()) return;
-    setChatHistory(prev => [...prev, { 
-      id: Date.now(), 
-      type: 'user', 
-      text, 
-      audioUrl: null,
-      timestamp: new Date(),
-      isPending: false
-    }]);
-  };
-
   const formatTime = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
   const suggestions = [
-    'What are your technical skills?',
-    'Tell me about your work experience',
-    'What projects have you built?',
-    'Are you available for freelance work?',
+    { id: 1, text: "Tell me about your experience as an AI Research Engineer" },
+    { id: 2, text: "What are your core AI competencies and technical skills?" },
+    { id: 3, text: "Can you explain your experience with RAG systems and LLM fine-tuning?" },
+    { id: 4, text: "What projects have you worked on Avasoft?" },
+    { id: 5, text: "What are your strongest technical skills in AI and machine learning?" },
+    { id: 6, text: "Describe your experience with LangTech translation platform" },
+    { id: 7, text: "What AI frameworks and tools are you proficient with?" },
+    { id: 8, text: "Explain your experience with RAG systems and vector databases" },
+    { id: 9, text: "Tell me about your CloudGen drag-and-drop platform" },
+    { id: 10, text: "What's your experience with AWS and Azure cloud services?" },
+    { id: 11, text: "Describe your educational RAG chatbot project - LFS" },
+    { id: 12, text: "What programming languages are you most comfortable with?" },
+    { id: 13, text: "Tell me about your Zeb Pulse AI framework review project" },
+    { id: 14, text: "What's your experience with computer vision and NLP?" },
+    { id: 15, text: "Describe your PDF AI automation SaaS application" },
+    { id: 16, text: "How do you handle full-stack development projects?" },
+    { id: 17, text: "What's your experience with DevOps and CI/CD pipelines?" },
+    { id: 18, text: "Tell me about your academic background and education" },
+    { id: 19, text: "What industries have you applied AI solutions to?" },
+    { id: 20, text: "Describe your experience with OpenAI GPT and Google Gemini" },
+    { id: 21, text: "What's your approach to machine learning deployment?" },
+    { id: 22, text: "Tell me about your RPA development experience" },
+    { id: 23, text: "What are your career aspirations and future goals?" }
   ];
 
-  return (
-    <div style={styles.root}>
-      <style>{css}</style>
-      <div style={styles.orb1} />
-      <div style={styles.orb2} />
+  // Theme-based styles
+  const theme = {
+    bgPrimary: isDarkMode ? '#0d0d14' : '#ffffff',
+    bgSecondary: isDarkMode ? '#1a1a24' : '#f9fafb',
+    bgTertiary: isDarkMode ? 'rgba(255,255,255,0.03)' : '#f3f4f6',
+    textPrimary: isDarkMode ? '#f0f0f8' : '#111827',
+    textSecondary: isDarkMode ? 'rgba(255,255,255,0.6)' : '#4b5563',
+    textMuted: isDarkMode ? 'rgba(255,255,255,0.35)' : '#6b7280',
+    border: isDarkMode ? 'rgba(255,255,255,0.08)' : '#e5e7eb',
+    userBubble: isDarkMode ? 'rgba(16,185,129,0.15)' : '#ecfdf5',
+    userBorder: isDarkMode ? 'rgba(16,185,129,0.3)' : '#a7f3d0',
+    botBubble: isDarkMode ? 'rgba(255,255,255,0.05)' : '#f3f4f6',
+    botBorder: isDarkMode ? 'rgba(255,255,255,0.08)' : '#e5e7eb',
+  };
 
-      <div style={styles.layout}>
+  return (
+    <div style={{ ...styles.root, background: theme.bgPrimary }}>
+      <style>{css}</style>
+
+      <div style={{ ...styles.layout, background: theme.bgPrimary }}>
         {/* Sidebar */}
-        <aside style={styles.sidebar}>
+        <aside style={{ ...styles.sidebar, background: theme.bgSecondary }}>
           <div style={styles.sidebarTop}>
             <div style={styles.avatar}>TS</div>
             <div>
-              <div style={styles.avatarName}>Thirumurugan</div>
-              <div style={styles.avatarRole}>AI Portfolio</div>
+              <div style={{ ...styles.avatarName, color: theme.textPrimary }}>Thirumurugan</div>
+              <div style={{ ...styles.avatarRole, color: theme.textMuted }}>AI Portfolio</div>
             </div>
           </div>
-          <div style={styles.divider} />
-          <div style={styles.sidebarLabel}>Try asking</div>
-          {suggestions.map((s, i) => (
-            <button key={i} style={styles.suggestionBtn} className="suggestion-btn"
-              onClick={() => handleUserQuestion(s)}>
-              <span style={styles.suggestionIcon}>↗</span>{s}
-            </button>
-          ))}
+          <div style={{ ...styles.divider, background: theme.border }} />
+          <div style={{ ...styles.sidebarLabel, color: theme.textMuted }}>Try asking</div>
+          <div style={styles.suggestionsList}>
+            {suggestions.map((s) => (
+              <button 
+                key={s.id} 
+                style={{ ...styles.suggestionBtn, borderColor: theme.border, color: theme.textSecondary }}
+                className="suggestion-btn disabled-suggestion"
+                disabled={true}
+              >
+                <span style={styles.suggestionIcon}>↗</span>
+                <span style={styles.suggestionText}>{s.text}</span>
+              </button>
+            ))}
+          </div>
           <div style={{ flex: 1 }} />
-          <div style={styles.statusBadge}>
+          <div style={{ ...styles.statusBadge, color: theme.textMuted }}>
             <span style={{ ...styles.statusDot, background: isRecording ? '#f87171' : isProcessing ? '#fbbf24' : '#34d399' }}
               className={isRecording || isProcessing ? 'pulse-dot' : ''} />
             {isRecording ? 'Recording' : isProcessing ? 'Processing…' : 'Ready'}
@@ -371,27 +461,37 @@ const VoiceChatbot = () => {
         </aside>
 
         {/* Main */}
-        <main style={styles.main}>
-          <header style={styles.header}>
+        <main style={{ ...styles.main, background: theme.bgPrimary }}>
+          <header style={{ ...styles.header, borderBottomColor: theme.border, background: theme.bgPrimary }}>
             <div>
-              <div style={styles.headerTitle}>Voice Chat</div>
-              <div style={styles.headerSub}>Speak naturally — ask anything about Thiru's profile</div>
+              <div style={{ ...styles.headerTitle, color: theme.textPrimary }}>Voice Chat</div>
+              <div style={{ ...styles.headerSub, color: theme.textMuted }}>Speak naturally — ask anything about Thiru's profile</div>
             </div>
-            {isRecording && (
-              <div style={styles.recTimer} className="fade-in">
-                <span style={styles.recDot} className="pulse-dot" />
-                {formatTime(recordingTime)}
-              </div>
-            )}
+            <div style={styles.headerActions}>
+              {isRecording && (
+                <div style={styles.recTimer} className="fade-in">
+                  <span style={styles.recDot} className="pulse-dot" />
+                  {formatTime(recordingTime)}
+                </div>
+              )}
+              <button onClick={toggleDarkMode} style={{ ...styles.iconBtn, borderColor: theme.border, background: theme.bgTertiary, color: theme.textSecondary }} className="icon-btn" title={isDarkMode ? 'Light Mode' : 'Dark Mode'}>
+                {isDarkMode ? <SunIcon /> : <MoonIcon />}
+              </button>
+              <button onClick={toggleFullscreen} style={{ ...styles.iconBtn, borderColor: theme.border, background: theme.bgTertiary, color: theme.textSecondary }} className="icon-btn" title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}>
+                {isFullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
+              </button>
+            </div>
           </header>
 
-          {/* Chat */}
-          <div style={styles.chatArea}>
+          {/* Chat Area - Scrollable */}
+          <div style={{ ...styles.chatArea, background: theme.bgPrimary }}>
             {chatHistory.length === 0 && !isProcessing ? (
               <div style={styles.emptyState} className="fade-in">
-                <div style={styles.emptyIcon}><MicIcon size={28} color="#a78bfa" /></div>
-                <div style={styles.emptyTitle}>Start the conversation</div>
-                <div style={styles.emptyText}>Press the mic button and ask about Thirumurugan's background, skills, or projects.</div>
+                <div style={{ ...styles.emptyIcon, background: theme.bgTertiary, borderColor: theme.border }}>
+                  <MicIcon size={28} color={isDarkMode ? '#a78bfa' : '#7c3aed'} />
+                </div>
+                <div style={{ ...styles.emptyTitle, color: theme.textSecondary }}>Start the conversation</div>
+                <div style={{ ...styles.emptyText, color: theme.textMuted }}>Press the mic button and ask about Thirumurugan's background, skills, or projects.</div>
               </div>
             ) : (
               <>
@@ -400,66 +500,65 @@ const VoiceChatbot = () => {
                     style={{ ...styles.msgRow, justifyContent: msg.type === 'user' ? 'flex-end' : 'flex-start' }}
                     className="msg-appear">
                     
-                    {/* Bot Avatar (left side) */}
                     {msg.type === 'bot' && <div style={styles.botAvatar}>TS</div>}
 
-                    {/* Message Bubble */}
-                    <div style={msg.type === 'user' ? styles.userBubble : styles.botBubble}>
+                    <div style={msg.type === 'user' ? 
+                      { ...styles.userBubble, background: theme.userBubble, borderColor: theme.userBorder } : 
+                      { ...styles.botBubble, background: theme.botBubble, borderColor: theme.botBorder }}>
                       {msg.type === 'user' ? (
                         <>
-                          <div style={styles.userLabel}>
+                          <div style={{ ...styles.userLabel, color: '#10b981' }}>
                             <span style={styles.userLabelDot} />
                             You {msg.isPending && <span style={styles.pendingBadge}>• Sending...</span>}
                             {msg.hasError && <span style={styles.errorBadge}>• Failed</span>}
                           </div>
-                          {/* User Audio Player */}
                           {msg.audioUrl ? (
                             <AudioMessage
                               audioUrl={msg.audioUrl}
                               side="user"
                               timestamp={msg.timestamp}
                               onEnded={() => setPlayingId(null)}
+                              isDarkMode={isDarkMode}
                             />
                           ) : (
-                            <div style={styles.bubbleText}>{msg.text}</div>
+                            <div style={{ ...styles.bubbleText, color: theme.textPrimary }}>{msg.text}</div>
                           )}
-                          <div style={{ ...styles.bubbleTime, marginTop: 6 }}>
+                          <div style={{ ...styles.bubbleTime, color: theme.textMuted, marginTop: 6 }}>
                             {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
                         </>
                       ) : (
                         <>
-                          <div style={styles.botLabel}>
+                          <div style={{ ...styles.botLabel, color: '#a78bfa' }}>
                             <span style={styles.botLabelDot} />
                             Voice response
                           </div>
-                          {/* Bot Audio Player */}
                           <AudioMessage
                             audioUrl={msg.audioUrl}
                             side="bot"
                             timestamp={msg.timestamp}
                             onEnded={() => setPlayingId(null)}
+                            isDarkMode={isDarkMode}
                           />
-                          <div style={{ ...styles.bubbleTime, marginTop: 6 }}>
+                          <div style={{ ...styles.bubbleTime, color: theme.textMuted, marginTop: 6 }}>
                             {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
                         </>
                       )}
                     </div>
 
-                    {/* User Avatar (right side) */}
-                    {msg.type === 'user' && <div style={styles.userAvatarSmall}>You</div>}
+                    {msg.type === 'user' && <div style={{ ...styles.userAvatarSmall, background: theme.bgTertiary, borderColor: theme.border, color: theme.textMuted }}>You</div>}
                   </div>
                 ))}
 
                 {isProcessing && !pendingUserMessage && (
                   <div style={{ ...styles.msgRow, justifyContent: 'flex-start' }} className="msg-appear">
                     <div style={styles.botAvatar}>TS</div>
-                    <div style={styles.botBubble}>
+                    <div style={{ ...styles.botBubble, background: theme.botBubble, borderColor: theme.botBorder }}>
                       <div style={styles.typingDots}>
-                        <span className="dot-bounce" style={{ animationDelay: '0ms' }} />
-                        <span className="dot-bounce" style={{ animationDelay: '160ms' }} />
-                        <span className="dot-bounce" style={{ animationDelay: '320ms' }} />
+                        <span className="dot-bounce" style={{ animationDelay: '0ms', background: isDarkMode ? '#a78bfa' : '#7c3aed' }} />
+                        <span className="dot-bounce" style={{ animationDelay: '160ms', background: isDarkMode ? '#a78bfa' : '#7c3aed' }} />
+                        <span className="dot-bounce" style={{ animationDelay: '320ms', background: isDarkMode ? '#a78bfa' : '#7c3aed' }} />
                       </div>
                     </div>
                   </div>
@@ -469,23 +568,23 @@ const VoiceChatbot = () => {
             <div ref={chatEndRef} />
           </div>
 
-          {/* Error */}
+          {/* Error Bar */}
           {error && (
             <div style={styles.errorBar} className="fade-in">
               <span style={{ marginRight: 6 }}>⚠</span>{error}
             </div>
           )}
 
-          {/* Visualizer + Controls */}
-          <div style={styles.controlsArea}>
+          {/* Controls Area - Fixed at bottom */}
+          <div style={{ ...styles.controlsArea, borderTopColor: theme.border, background: theme.bgPrimary }}>
             <div style={styles.waveform}>
               {bars.map((h, i) => (
                 <div key={i} style={{
                   ...styles.bar,
                   height: h,
                   background: isRecording
-                    ? `hsl(${260 + i * 2}, 80%, ${55 + h}%)`
-                    : 'rgba(167,139,250,0.18)',
+                    ? `hsl(${260 + i * 2}, 80%, ${isDarkMode ? 55 : 50}%)`
+                    : isDarkMode ? 'rgba(167,139,250,0.2)' : 'rgba(124,58,237,0.15)',
                   transition: isRecording ? 'height 0.05s ease' : 'height 0.4s ease',
                 }} />
               ))}
@@ -504,13 +603,13 @@ const VoiceChatbot = () => {
                 </button>
               )}
               {isProcessing && !isRecording && (
-                <div style={styles.spinnerBtn}>
-                  <div style={styles.spinner} className="spin" />
+                <div style={{ ...styles.spinnerBtn, background: theme.bgTertiary, borderColor: theme.border }}>
+                  <div style={{ ...styles.spinner, borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#e5e7eb', borderTopColor: '#7c3aed' }} className="spin" />
                 </div>
               )}
             </div>
 
-            <div style={styles.micHint}>
+            <div style={{ ...styles.micHint, color: theme.textMuted }}>
               {isRecording ? 'Tap to stop' : isProcessing ? 'Generating response…' : 'Tap to speak'}
             </div>
           </div>
@@ -519,6 +618,39 @@ const VoiceChatbot = () => {
     </div>
   );
 };
+
+// Icons
+const FullscreenIcon = () => (
+  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+  </svg>
+);
+
+const ExitFullscreenIcon = () => (
+  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+  </svg>
+);
+
+const SunIcon = () => (
+  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="5" />
+    <line x1="12" y1="1" x2="12" y2="3" />
+    <line x1="12" y1="21" x2="12" y2="23" />
+    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+    <line x1="1" y1="12" x2="3" y2="12" />
+    <line x1="21" y1="12" x2="23" y2="12" />
+    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+  </svg>
+);
+
+const MoonIcon = () => (
+  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+  </svg>
+);
 
 const MicIcon = ({ size = 24, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -531,54 +663,29 @@ const MicIcon = ({ size = 24, color = 'currentColor' }) => (
 
 const styles = {
   root: {
-    minHeight: '100vh',
-    background: '#0d0d14',
+    width: '100vw',
+    height: '100vh',
     display: 'flex',
     alignItems: 'stretch',
     justifyContent: 'center',
     fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif",
-    position: 'relative',
-    overflow: 'hidden',
-    padding: '24px',
     boxSizing: 'border-box',
-  },
-  orb1: {
-    position: 'fixed', top: '-120px', right: '-80px',
-    width: 480, height: 480,
-    borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(139,92,246,0.22) 0%, transparent 70%)',
-    pointerEvents: 'none',
-  },
-  orb2: {
-    position: 'fixed', bottom: '-100px', left: '-60px',
-    width: 360, height: 360,
-    borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(59,130,246,0.15) 0%, transparent 70%)',
-    pointerEvents: 'none',
+    overflow: 'hidden',
   },
   layout: {
     display: 'flex',
     width: '100%',
-    maxWidth: 960,
-    minHeight: 'calc(100vh - 48px)',
-    borderRadius: 20,
-    overflow: 'hidden',
-    border: '1px solid rgba(255,255,255,0.07)',
-    background: 'rgba(16,16,26,0.85)',
-    backdropFilter: 'blur(24px)',
-    boxShadow: '0 32px 80px rgba(0,0,0,0.6)',
+    height: '100vh',
     position: 'relative',
-    zIndex: 1,
   },
   sidebar: {
-    width: 220,
+    width: 280,
     flexShrink: 0,
-    padding: '28px 20px',
-    borderRight: '1px solid rgba(255,255,255,0.06)',
+    padding: '24px 16px',
     display: 'flex',
     flexDirection: 'column',
     gap: 8,
-    background: 'rgba(255,255,255,0.02)',
+    overflowY: 'auto',
   },
   sidebarTop: {
     display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4,
@@ -590,29 +697,39 @@ const styles = {
     fontSize: 13, fontWeight: 700, color: '#fff', letterSpacing: 1,
     flexShrink: 0,
   },
-  avatarName: { fontSize: 14, fontWeight: 600, color: '#f0f0f8', lineHeight: 1.3 },
-  avatarRole: { fontSize: 11, color: 'rgba(255,255,255,0.38)', marginTop: 2 },
-  divider: { height: 1, background: 'rgba(255,255,255,0.06)', margin: '12px 0' },
-  sidebarLabel: { fontSize: 10, fontWeight: 600, letterSpacing: 1.4, textTransform: 'uppercase', color: 'rgba(255,255,255,0.28)', marginBottom: 4 },
+  avatarName: { fontSize: 14, fontWeight: 600, lineHeight: 1.3 },
+  avatarRole: { fontSize: 11, marginTop: 2 },
+  divider: { height: 1, margin: '12px 0' },
+  sidebarLabel: { fontSize: 10, fontWeight: 600, letterSpacing: 1.4, textTransform: 'uppercase', marginBottom: 8 },
+  suggestionsList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    overflowY: 'auto',
+    scrollbarWidth: 'none',
+    msOverflowStyle: 'none',
+  },
   suggestionBtn: {
     background: 'transparent',
-    border: '1px solid rgba(255,255,255,0.07)',
+    border: '1px solid',
     borderRadius: 10,
-    padding: '8px 12px',
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 12,
+    padding: '8px 10px',
+    fontSize: 11,
     textAlign: 'left',
-    cursor: 'pointer',
     display: 'flex',
     alignItems: 'flex-start',
     gap: 6,
-    lineHeight: 1.45,
-    transition: 'all 0.18s ease',
+    lineHeight: 1.4,
+    opacity: 0.6,
+    cursor: 'not-allowed',
   },
-  suggestionIcon: { color: '#a78bfa', flexShrink: 0, fontSize: 13, marginTop: 1 },
+  suggestionText: {
+    flex: 1,
+  },
+  suggestionIcon: { color: '#7c3aed', flexShrink: 0, fontSize: 12, marginTop: 1 },
   statusBadge: {
     display: 'flex', alignItems: 'center', gap: 7,
-    fontSize: 11, color: 'rgba(255,255,255,0.4)',
+    fontSize: 11,
     padding: '8px 0', marginTop: 8,
   },
   statusDot: { width: 7, height: 7, borderRadius: '50%', flexShrink: 0 },
@@ -626,27 +743,46 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '24px 28px 16px',
-    borderBottom: '1px solid rgba(255,255,255,0.06)',
+    padding: '20px 24px 16px',
+    borderBottom: '1px solid',
+    flexShrink: 0,
+    flexWrap: 'wrap',
+    gap: 12,
   },
-  headerTitle: { fontSize: 20, fontWeight: 700, color: '#f0f0f8', letterSpacing: -0.3 },
-  headerSub: { fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 3 },
+  headerActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerTitle: { fontSize: 20, fontWeight: 700, letterSpacing: -0.3 },
+  headerSub: { fontSize: 12, marginTop: 3 },
   recTimer: {
     display: 'flex', alignItems: 'center', gap: 7,
-    background: 'rgba(248,113,113,0.12)',
-    border: '1px solid rgba(248,113,113,0.25)',
+    background: '#fee2e2',
+    border: '1px solid #fecaca',
     borderRadius: 20, padding: '5px 12px',
     fontSize: 13, fontWeight: 600,
-    color: '#f87171', fontVariantNumeric: 'tabular-nums',
+    color: '#dc2626', fontVariantNumeric: 'tabular-nums',
   },
-  recDot: { width: 7, height: 7, borderRadius: '50%', background: '#f87171', flexShrink: 0 },
+  recDot: { width: 7, height: 7, borderRadius: '50%', background: '#dc2626', flexShrink: 0 },
+  iconBtn: {
+    border: '1px solid',
+    borderRadius: 10,
+    padding: '6px 10px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s ease',
+  },
   chatArea: {
     flex: 1,
     overflowY: 'auto',
-    padding: '20px 28px',
+    padding: '20px 24px',
     display: 'flex',
     flexDirection: 'column',
     gap: 14,
+    minHeight: 0,
   },
   emptyState: {
     flex: 1, display: 'flex', flexDirection: 'column',
@@ -655,83 +791,81 @@ const styles = {
   },
   emptyIcon: {
     width: 64, height: 64, borderRadius: 20,
-    background: 'rgba(139,92,246,0.1)',
-    border: '1px solid rgba(139,92,246,0.25)',
+    border: '1px solid',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
-  emptyTitle: { fontSize: 17, fontWeight: 600, color: 'rgba(255,255,255,0.7)', marginTop: 4 },
-  emptyText: { fontSize: 13, color: 'rgba(255,255,255,0.3)', textAlign: 'center', maxWidth: 300, lineHeight: 1.6 },
+  emptyTitle: { fontSize: 17, fontWeight: 600, marginTop: 4 },
+  emptyText: { fontSize: 13, textAlign: 'center', maxWidth: 300, lineHeight: 1.6 },
   msgRow: { display: 'flex', alignItems: 'flex-end', gap: 10 },
   botAvatar: {
-    width: 30, height: 30, borderRadius: 10, flexShrink: 0,
+    width: 32, height: 32, borderRadius: 10, flexShrink: 0,
     background: 'linear-gradient(135deg, #7c3aed, #4f46e5)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontSize: 9, fontWeight: 700, color: '#fff', letterSpacing: 0.5,
   },
   userAvatarSmall: {
-    width: 30, height: 30, borderRadius: 10, flexShrink: 0,
-    background: 'rgba(255,255,255,0.08)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+    border: '1px solid',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 9, fontWeight: 600, color: 'rgba(255,255,255,0.45)',
+    fontSize: 9, fontWeight: 600,
   },
   botBubble: {
-    background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.08)',
+    border: '1px solid',
     borderRadius: '16px 16px 16px 4px',
     padding: '10px 14px',
-    maxWidth: 420,
+    maxWidth: 480,
   },
   userBubble: {
-    background: 'rgba(16,185,129,0.1)',
-    border: '1px solid rgba(16,185,129,0.2)',
+    border: '1px solid',
     borderRadius: '16px 16px 4px 16px',
     padding: '10px 14px',
-    maxWidth: 420,
+    maxWidth: 480,
   },
-  bubbleText: { fontSize: 14, color: 'rgba(255,255,255,0.85)', lineHeight: 1.6 },
-  bubbleTime: { fontSize: 10, color: 'rgba(255,255,255,0.28)', textAlign: 'right' },
+  bubbleText: { fontSize: 14, lineHeight: 1.6 },
+  bubbleTime: { fontSize: 10, textAlign: 'right' },
   botLabel: {
     display: 'flex', alignItems: 'center', gap: 5,
     fontSize: 10, fontWeight: 600, letterSpacing: 0.8,
-    textTransform: 'uppercase', color: '#a78bfa', marginBottom: 8,
+    textTransform: 'uppercase', marginBottom: 8,
   },
   botLabelDot: { width: 6, height: 6, borderRadius: '50%', background: '#a78bfa', flexShrink: 0 },
   userLabel: {
     display: 'flex', alignItems: 'center', gap: 5,
     fontSize: 10, fontWeight: 600, letterSpacing: 0.8,
-    textTransform: 'uppercase', color: '#34d399', marginBottom: 8,
+    textTransform: 'uppercase', marginBottom: 8,
   },
-  userLabelDot: { width: 6, height: 6, borderRadius: '50%', background: '#34d399', flexShrink: 0 },
+  userLabelDot: { width: 6, height: 6, borderRadius: '50%', background: '#10b981', flexShrink: 0 },
   pendingBadge: {
     fontSize: 9,
     fontWeight: 400,
-    color: '#fbbf24',
+    color: '#f59e0b',
     marginLeft: 4,
   },
   errorBadge: {
     fontSize: 9,
     fontWeight: 400,
-    color: '#f87171',
+    color: '#ef4444',
     marginLeft: 4,
   },
   typingDots: { display: 'flex', gap: 4, alignItems: 'center', padding: '2px 0' },
   errorBar: {
-    margin: '0 28px 8px',
+    margin: '0 24px 8px',
     padding: '10px 14px',
-    background: 'rgba(248,113,113,0.08)',
-    border: '1px solid rgba(248,113,113,0.2)',
+    background: '#fef2f2',
+    border: '1px solid #fee2e2',
     borderRadius: 12,
-    fontSize: 13, color: '#f87171',
+    fontSize: 13, color: '#dc2626',
     display: 'flex', alignItems: 'center',
+    flexShrink: 0,
   },
   controlsArea: {
-    borderTop: '1px solid rgba(255,255,255,0.06)',
-    padding: '16px 28px 24px',
+    borderTop: '1px solid',
+    padding: '16px 24px 24px',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     gap: 14,
+    flexShrink: 0,
   },
   waveform: {
     display: 'flex', alignItems: 'flex-end', gap: 3,
@@ -745,13 +879,13 @@ const styles = {
     border: 'none', cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     position: 'relative',
-    boxShadow: '0 0 28px rgba(124,58,237,0.45)',
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
     transition: 'transform 0.15s ease, box-shadow 0.15s ease',
   },
   micRing: {
     position: 'absolute', inset: -8,
     borderRadius: '50%',
-    border: '1.5px solid rgba(167,139,250,0.35)',
+    border: '1.5px solid #c4b5fd',
     pointerEvents: 'none',
   },
   stopBtn: {
@@ -759,46 +893,51 @@ const styles = {
     background: 'linear-gradient(135deg, #ef4444, #dc2626)',
     border: 'none', cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    boxShadow: '0 0 28px rgba(239,68,68,0.4)',
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
     transition: 'transform 0.15s ease',
   },
   stopSquare: { width: 18, height: 18, borderRadius: 4, background: '#fff' },
   spinnerBtn: {
     width: 64, height: 64, borderRadius: '50%',
-    background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    border: '1px solid',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   spinner: {
     width: 24, height: 24, borderRadius: '50%',
-    border: '2px solid rgba(255,255,255,0.1)',
-    borderTop: '2px solid #a78bfa',
+    border: '2px solid',
+    borderTop: '2px solid #7c3aed',
   },
-  micHint: { fontSize: 12, color: 'rgba(255,255,255,0.3)', letterSpacing: 0.3 },
+  micHint: { fontSize: 12, letterSpacing: 0.3 },
 };
 
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
-  * { box-sizing: border-box; }
-  ::-webkit-scrollbar { width: 4px; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  /* Hide scrollbar for suggestions list */
+  .suggestionsList::-webkit-scrollbar {
+    display: none;
+  }
+  
+  ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
+  
   .play-btn:hover { transform: scale(1.08); }
   .play-btn:active { transform: scale(0.95); }
-  .suggestion-btn:hover {
-    background: rgba(139,92,246,0.1) !important;
-    border-color: rgba(139,92,246,0.3) !important;
-    color: rgba(255,255,255,0.75) !important;
-  }
   .mic-btn:hover { transform: scale(1.06) !important; }
   .mic-btn:active { transform: scale(0.97) !important; }
+  .icon-btn:hover {
+    background: rgba(124,58,237,0.1) !important;
+    border-color: #7c3aed !important;
+    color: #7c3aed !important;
+  }
   .fade-in { animation: fadeIn 0.3s ease forwards; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
   .msg-appear { animation: msgIn 0.25s ease forwards; }
   @keyframes msgIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   .dot-bounce {
     display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-    background: rgba(167,139,250,0.7);
     animation: dotBounce 1.2s infinite ease-in-out;
   }
   @keyframes dotBounce {
@@ -814,6 +953,27 @@ const css = `
   }
   .spin { animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Responsive Design */
+  @media (max-width: 768px) {
+    .sidebar { width: 80px !important; min-width: 80px !important; align-items: center !important; padding: 16px 8px !important; }
+    .sidebarTop { flex-direction: column !important; text-align: center !important; gap: 6px !important; }
+    .sidebarLabel { display: none !important; }
+    .statusBadge { justify-content: center !important; font-size: 9px !important; }
+    .avatarName { display: none !important; }
+    .avatarRole { display: none !important; }
+    .divider { display: none !important; }
+    .suggestionsList { display: none !important; }
+    .msgRow { gap: 6px !important; }
+    .botBubble, .userBubble { max-width: 280px !important; padding: 8px 10px !important; }
+    .botAvatar, .userAvatarSmall { width: 28px !important; height: 28px !important; font-size: 8px !important; }
+    .header { padding: 12px 16px !important; }
+    .chatArea { padding: 12px 16px !important; }
+    .controlsArea { padding: 12px 16px 20px !important; }
+    .micBtn, .stopBtn, .spinnerBtn { width: 56px !important; height: 56px !important; }
+    .headerTitle { font-size: 16px !important; }
+    .headerSub { font-size: 10px !important; }
+  }
 `;
 
 export default VoiceChatbot;
