@@ -481,7 +481,6 @@ const VoiceChatbot = () => {
                   style={{ ...styles.suggestionBtn, borderColor: theme.border, color: theme.textSecondary }}
                   className="suggestion-btn disabled-suggestion"
                   disabled={true}
-                  onClick={() => setShowMobileSidebar(false)}
                 >
                   <span style={styles.suggestionIcon}>↗</span>
                   <span style={styles.suggestionText}>{s.text}</span>
@@ -535,9 +534,9 @@ const VoiceChatbot = () => {
         {/* Main */}
         <main style={{ ...styles.main, background: theme.bgPrimary }}>
           <header style={{ ...styles.header, borderBottomColor: theme.border, background: theme.bgPrimary }}>
-            <div style={isMobile ? styles.headerTitleMobile : styles.headerTitle}>
-              <div style={{ ...styles.headerTitleText, color: theme.textPrimary }}>AI Voice Chat</div>
-              <div style={{ ...styles.headerSubText, color: theme.textMuted }}>Speak naturally — ask anything about Thiru's profile</div>
+            <div style={isMobile ? styles.headerTitleMobile : styles.headerTitleDesktop}>
+              <div style={{ ...styles.headerTitle, color: theme.textPrimary }}>AI Voice Chat - Thirumurugan Subramaniyan</div>
+              <div style={{ ...styles.headerSub, color: theme.textMuted }}>Speak naturally — ask anything about Thiru's profile</div>
             </div>
             <div style={styles.headerActions}>
               {isRecording && (
@@ -753,7 +752,7 @@ const styles = {
     width: 40,
     height: 40,
     borderRadius: 10,
-    background: 'rgba(124,58,237,0.9)',
+    background: 'rgba(124,58,237,0.95)',
     border: 'none',
     color: '#fff',
     cursor: 'pointer',
@@ -761,6 +760,7 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+    backdropFilter: 'blur(8px)',
   },
   mobileOverlay: {
     position: 'fixed',
@@ -871,39 +871,32 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '20px 24px 16px',
+    padding: '16px 24px',
     borderBottom: '1px solid',
     flexShrink: 0,
     flexWrap: 'wrap',
     gap: 12,
   },
-  headerTitle: {
+  headerTitleDesktop: {
     flex: 1,
   },
   headerTitleMobile: {
     flex: 1,
-    marginLeft: 48,
-  },
-  headerTitleText: {
-    fontSize: 20,
-    fontWeight: 700,
-    letterSpacing: -0.3,
-  },
-  headerSubText: {
-    fontSize: 12,
-    marginTop: 3,
+    paddingLeft: 48,
   },
   headerActions: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
   },
+  headerTitle: { fontSize: 18, fontWeight: 700, letterSpacing: -0.3 },
+  headerSub: { fontSize: 11, marginTop: 2 },
   recTimer: {
     display: 'flex', alignItems: 'center', gap: 7,
     background: '#fee2e2',
     border: '1px solid #fecaca',
-    borderRadius: 20, padding: '5px 12px',
-    fontSize: 13, fontWeight: 600,
+    borderRadius: 20, padding: '4px 10px',
+    fontSize: 12, fontWeight: 600,
     color: '#dc2626', fontVariantNumeric: 'tabular-nums',
   },
   recDot: { width: 7, height: 7, borderRadius: '50%', background: '#dc2626', flexShrink: 0 },
@@ -920,10 +913,10 @@ const styles = {
   chatArea: {
     flex: 1,
     overflowY: 'auto',
-    padding: '20px 24px',
+    padding: '16px 20px',
     display: 'flex',
     flexDirection: 'column',
-    gap: 14,
+    gap: 12,
     minHeight: 0,
   },
   emptyState: {
@@ -937,8 +930,8 @@ const styles = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   emptyTitle: { fontSize: 17, fontWeight: 600, marginTop: 4 },
-  emptyText: { fontSize: 13, textAlign: 'center', maxWidth: 300, lineHeight: 1.6 },
-  msgRow: { display: 'flex', alignItems: 'flex-end', gap: 10 },
+  emptyText: { fontSize: 13, textAlign: 'center', maxWidth: 280, lineHeight: 1.6 },
+  msgRow: { display: 'flex', alignItems: 'flex-end', gap: 8 },
   botAvatar: {
     width: 32, height: 32, borderRadius: 10, flexShrink: 0,
     background: 'linear-gradient(135deg, #7c3aed, #4f46e5)',
@@ -991,32 +984,32 @@ const styles = {
   },
   typingDots: { display: 'flex', gap: 4, alignItems: 'center', padding: '2px 0' },
   errorBar: {
-    margin: '0 24px 8px',
-    padding: '10px 14px',
+    margin: '0 20px 8px',
+    padding: '8px 12px',
     background: '#fef2f2',
     border: '1px solid #fee2e2',
-    borderRadius: 12,
-    fontSize: 13, color: '#dc2626',
+    borderRadius: 10,
+    fontSize: 12, color: '#dc2626',
     display: 'flex', alignItems: 'center',
     flexShrink: 0,
   },
   controlsArea: {
     borderTop: '1px solid',
-    padding: '16px 24px 24px',
+    padding: '14px 20px 20px',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 14,
+    gap: 12,
     flexShrink: 0,
   },
   waveform: {
     display: 'flex', alignItems: 'flex-end', gap: 3,
-    height: 52, width: '100%', justifyContent: 'center',
+    height: 48, width: '100%', justifyContent: 'center',
   },
   bar: { width: 4, borderRadius: 4, minHeight: 2 },
   micWrapper: { display: 'flex', alignItems: 'center', justifyContent: 'center' },
   micBtn: {
-    width: 64, height: 64, borderRadius: '50%',
+    width: 60, height: 60, borderRadius: '50%',
     background: 'linear-gradient(135deg, #7c3aed, #4f46e5)',
     border: 'none', cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1025,13 +1018,13 @@ const styles = {
     transition: 'transform 0.15s ease, box-shadow 0.15s ease',
   },
   micRing: {
-    position: 'absolute', inset: -8,
+    position: 'absolute', inset: -6,
     borderRadius: '50%',
     border: '1.5px solid #c4b5fd',
     pointerEvents: 'none',
   },
   stopBtn: {
-    width: 64, height: 64, borderRadius: '50%',
+    width: 60, height: 60, borderRadius: '50%',
     background: 'linear-gradient(135deg, #ef4444, #dc2626)',
     border: 'none', cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1040,16 +1033,16 @@ const styles = {
   },
   stopSquare: { width: 18, height: 18, borderRadius: 4, background: '#fff' },
   spinnerBtn: {
-    width: 64, height: 64, borderRadius: '50%',
+    width: 60, height: 60, borderRadius: '50%',
     border: '1px solid',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   spinner: {
-    width: 24, height: 24, borderRadius: '50%',
+    width: 22, height: 22, borderRadius: '50%',
     border: '2px solid',
     borderTop: '2px solid #7c3aed',
   },
-  micHint: { fontSize: 12, letterSpacing: 0.3 },
+  micHint: { fontSize: 11, letterSpacing: 0.3 },
 };
 
 const css = `
@@ -1067,7 +1060,7 @@ const css = `
   
   .play-btn:hover { transform: scale(1.08); }
   .play-btn:active { transform: scale(0.95); }
-  .mic-btn:hover { transform: scale(1.06) !important; }
+  .mic-btn:hover { transform: scale(1.05) !important; }
   .mic-btn:active { transform: scale(0.97) !important; }
   .icon-btn:hover {
     background: rgba(124,58,237,0.1) !important;
@@ -1076,6 +1069,7 @@ const css = `
   }
   .mobile-menu-btn:hover {
     transform: scale(1.05);
+    background: rgba(124,58,237,1) !important;
   }
   .fade-in { animation: fadeIn 0.3s ease forwards; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -1103,24 +1097,25 @@ const css = `
   @media (max-width: 768px) {
     .header { padding: 12px 16px !important; }
     .chatArea { padding: 12px 16px !important; }
-    .controlsArea { padding: 12px 16px 20px !important; }
-    .micBtn, .stopBtn, .spinnerBtn { width: 56px !important; height: 56px !important; }
+    .controlsArea { padding: 12px 16px 18px !important; }
+    .micBtn, .stopBtn, .spinnerBtn { width: 52px !important; height: 52px !important; }
+    .headerTitle { font-size: 15px !important; }
+    .headerSub { font-size: 10px !important; display: none !important; }
     .botAvatar, .userAvatarSmall { width: 28px !important; height: 28px !important; font-size: 8px !important; }
     .botBubble, .userBubble { max-width: 280px !important; padding: 8px 10px !important; }
     .msgRow { gap: 6px !important; }
-    .waveform { height: 40px !important; }
+    .waveform { height: 38px !important; }
     .bar { width: 3px !important; }
+    .iconBtn { padding: 4px 8px !important; }
+    .recTimer { padding: 3px 8px !important; font-size: 10px !important; }
   }
 
   @media (max-width: 480px) {
     .botBubble, .userBubble { max-width: 240px !important; }
-    .headerActions { gap: 4px !important; }
-    .iconBtn { padding: 4px 8px !important; }
-    .recTimer { padding: 3px 8px !important; font-size: 11px !important; }
-    .headerTitleText { font-size: 14px !important; }
-    .headerSubText { font-size: 9px !important; }
-    .mobileMenuBtn { top: 12px !important; left: 12px !important; width: 36px !important; height: 36px !important; }
-    .headerTitleMobile { margin-left: 44px !important; }
+    .headerActions { gap: 6px !important; }
+    .headerTitle { font-size: 13px !important; }
+    .emptyTitle { font-size: 15px !important; }
+    .emptyText { font-size: 11px !important; max-width: 240px !important; }
   }
 `;
 
