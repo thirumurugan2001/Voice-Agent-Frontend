@@ -152,7 +152,7 @@ const audioStyles = {
     display: 'flex', alignItems: 'center', gap: 8,
     padding: '8px 10px',
     borderRadius: 12,
-    minWidth: 200,
+    minWidth: 180,
     position: 'relative',
     border: '1px solid',
   },
@@ -225,6 +225,22 @@ const useDarkMode = () => {
   return { isDarkMode, toggleDarkMode: () => setIsDarkMode(prev => !prev) };
 };
 
+// ─── Mobile Detection Hook ────────────────────────────────────────────────────
+const useMobileDetect = () => {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  return isMobile;
+};
+
 // ─── Main Chatbot ─────────────────────────────────────────────────────────────
 const VoiceChatbot = () => {
   const [isRecording, setIsRecording] = useState(false);
@@ -236,8 +252,10 @@ const VoiceChatbot = () => {
   const [bars, setBars] = useState(Array(32).fill(2));
   const [playingId, setPlayingId] = useState(null);
   const [pendingUserMessage, setPendingUserMessage] = useState(null);
+  const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const { isFullscreen, toggleFullscreen } = useFullscreen();
   const { isDarkMode, toggleDarkMode } = useDarkMode();
+  const isMobile = useMobileDetect();
 
   const recordingTimerRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -427,44 +445,98 @@ const VoiceChatbot = () => {
     <div style={{ ...styles.root, background: theme.bgPrimary }}>
       <style>{css}</style>
 
-      <div style={{ ...styles.layout, background: theme.bgPrimary }}>
-        {/* Sidebar */}
-        <aside style={{ ...styles.sidebar, background: theme.bgSecondary }}>
-          <div style={styles.sidebarTop}>
-            <div style={styles.avatar}>TS</div>
-            <div>
-              <div style={{ ...styles.avatarName, color: theme.textPrimary }}>Thirumurugan</div>
-              <div style={{ ...styles.avatarRole, color: theme.textMuted }}>AI Portfolio</div>
+      {/* Mobile Menu Button */}
+      {isMobile && (
+        <button 
+          onClick={() => setShowMobileSidebar(!showMobileSidebar)} 
+          style={styles.mobileMenuBtn}
+          className="mobile-menu-btn"
+        >
+          <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+      )}
+
+      {/* Mobile Sidebar Overlay */}
+      {isMobile && showMobileSidebar && (
+        <div style={styles.mobileOverlay} onClick={() => setShowMobileSidebar(false)}>
+          <div style={{ ...styles.mobileSidebar, background: theme.bgSecondary }} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.mobileSidebarHeader}>
+              <div style={styles.avatar}>TS</div>
+              <div>
+                <div style={{ ...styles.avatarName, color: theme.textPrimary }}>Thirumurugan</div>
+                <div style={{ ...styles.avatarRole, color: theme.textMuted }}>AI Portfolio</div>
+              </div>
+              <button onClick={() => setShowMobileSidebar(false)} style={styles.closeBtn}>✕</button>
+            </div>
+            <div style={{ ...styles.divider, background: theme.border }} />
+            <div style={{ ...styles.sidebarLabel, color: theme.textMuted }}>Try asking</div>
+            <div style={styles.suggestionsList}>
+              {suggestions.map((s) => (
+                <button 
+                  key={s.id} 
+                  style={{ ...styles.suggestionBtn, borderColor: theme.border, color: theme.textSecondary }}
+                  className="suggestion-btn disabled-suggestion"
+                  disabled={true}
+                  onClick={() => setShowMobileSidebar(false)}
+                >
+                  <span style={styles.suggestionIcon}>↗</span>
+                  <span style={styles.suggestionText}>{s.text}</span>
+                </button>
+              ))}
+            </div>
+            <div style={{ ...styles.statusBadge, color: theme.textMuted }}>
+              <span style={{ ...styles.statusDot, background: isRecording ? '#f87171' : isProcessing ? '#fbbf24' : '#34d399' }}
+                className={isRecording || isProcessing ? 'pulse-dot' : ''} />
+              {isRecording ? 'Recording' : isProcessing ? 'Processing…' : 'Ready'}
             </div>
           </div>
-          <div style={{ ...styles.divider, background: theme.border }} />
-          <div style={{ ...styles.sidebarLabel, color: theme.textMuted }}>Try asking</div>
-          <div style={styles.suggestionsList}>
-            {suggestions.map((s) => (
-              <button 
-                key={s.id} 
-                style={{ ...styles.suggestionBtn, borderColor: theme.border, color: theme.textSecondary }}
-                className="suggestion-btn disabled-suggestion"
-                disabled={true}
-              >
-                <span style={styles.suggestionIcon}>↗</span>
-                <span style={styles.suggestionText}>{s.text}</span>
-              </button>
-            ))}
-          </div>
-          <div style={{ flex: 1 }} />
-          <div style={{ ...styles.statusBadge, color: theme.textMuted }}>
-            <span style={{ ...styles.statusDot, background: isRecording ? '#f87171' : isProcessing ? '#fbbf24' : '#34d399' }}
-              className={isRecording || isProcessing ? 'pulse-dot' : ''} />
-            {isRecording ? 'Recording' : isProcessing ? 'Processing…' : 'Ready'}
-          </div>
-        </aside>
+        </div>
+      )}
+
+      <div style={{ ...styles.layout, background: theme.bgPrimary }}>
+        {/* Desktop Sidebar - Hidden on mobile */}
+        {!isMobile && (
+          <aside style={{ ...styles.sidebar, background: theme.bgSecondary }}>
+            <div style={styles.sidebarTop}>
+              <div style={styles.avatar}>TS</div>
+              <div>
+                <div style={{ ...styles.avatarName, color: theme.textPrimary }}>Thirumurugan</div>
+                <div style={{ ...styles.avatarRole, color: theme.textMuted }}>AI Portfolio</div>
+              </div>
+            </div>
+            <div style={{ ...styles.divider, background: theme.border }} />
+            <div style={{ ...styles.sidebarLabel, color: theme.textMuted }}>Try asking</div>
+            <div style={styles.suggestionsList}>
+              {suggestions.map((s) => (
+                <button 
+                  key={s.id} 
+                  style={{ ...styles.suggestionBtn, borderColor: theme.border, color: theme.textSecondary }}
+                  className="suggestion-btn disabled-suggestion"
+                  disabled={true}
+                >
+                  <span style={styles.suggestionIcon}>↗</span>
+                  <span style={styles.suggestionText}>{s.text}</span>
+                </button>
+              ))}
+            </div>
+            <div style={{ flex: 1 }} />
+            <div style={{ ...styles.statusBadge, color: theme.textMuted }}>
+              <span style={{ ...styles.statusDot, background: isRecording ? '#f87171' : isProcessing ? '#fbbf24' : '#34d399' }}
+                className={isRecording || isProcessing ? 'pulse-dot' : ''} />
+              {isRecording ? 'Recording' : isProcessing ? 'Processing…' : 'Ready'}
+            </div>
+          </aside>
+        )}
 
         {/* Main */}
         <main style={{ ...styles.main, background: theme.bgPrimary }}>
           <header style={{ ...styles.header, borderBottomColor: theme.border, background: theme.bgPrimary }}>
             <div>
-              <div style={{ ...styles.headerTitle, color: theme.textPrimary }}>Voice Chat</div>
+              <div style={{ ...styles.headerTitle, color: theme.textPrimary }}>AI Voice Chat - Thirumurugan Subramaniyan</div>
               <div style={{ ...styles.headerSub, color: theme.textMuted }}>Speak naturally — ask anything about Thiru's profile</div>
             </div>
             <div style={styles.headerActions}>
@@ -594,7 +666,7 @@ const VoiceChatbot = () => {
               {!isRecording && !isProcessing && (
                 <button onClick={startRecording} style={styles.micBtn} className="mic-btn">
                   <div style={styles.micRing} />
-                  <MicIcon size={26} color="#fff" />
+                  <MicIcon size={isMobile ? 22 : 26} color="#fff" />
                 </button>
               )}
               {isRecording && (
@@ -671,6 +743,62 @@ const styles = {
     fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif",
     boxSizing: 'border-box',
     overflow: 'hidden',
+    position: 'relative',
+  },
+  mobileMenuBtn: {
+    position: 'fixed',
+    top: 12,
+    left: 12,
+    zIndex: 100,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    background: 'rgba(124,58,237,0.9)',
+    border: 'none',
+    color: '#fff',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+  },
+  mobileOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(0,0,0,0.5)',
+    zIndex: 200,
+    animation: 'fadeIn 0.2s ease',
+  },
+  mobileSidebar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '80%',
+    maxWidth: 300,
+    height: '100%',
+    padding: '20px 16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    overflowY: 'auto',
+    boxShadow: '2px 0 12px rgba(0,0,0,0.2)',
+  },
+  mobileSidebarHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    justifyContent: 'space-between',
+  },
+  closeBtn: {
+    background: 'transparent',
+    border: 'none',
+    fontSize: 20,
+    cursor: 'pointer',
+    color: '#666',
+    padding: 4,
   },
   layout: {
     display: 'flex',
@@ -932,6 +1060,9 @@ const css = `
     border-color: #7c3aed !important;
     color: #7c3aed !important;
   }
+  .mobile-menu-btn:hover {
+    transform: scale(1.05);
+  }
   .fade-in { animation: fadeIn 0.3s ease forwards; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
   .msg-appear { animation: msgIn 0.25s ease forwards; }
@@ -954,25 +1085,26 @@ const css = `
   .spin { animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Responsive Design */
+  /* Mobile Responsive Styles */
   @media (max-width: 768px) {
-    .sidebar { width: 80px !important; min-width: 80px !important; align-items: center !important; padding: 16px 8px !important; }
-    .sidebarTop { flex-direction: column !important; text-align: center !important; gap: 6px !important; }
-    .sidebarLabel { display: none !important; }
-    .statusBadge { justify-content: center !important; font-size: 9px !important; }
-    .avatarName { display: none !important; }
-    .avatarRole { display: none !important; }
-    .divider { display: none !important; }
-    .suggestionsList { display: none !important; }
-    .msgRow { gap: 6px !important; }
-    .botBubble, .userBubble { max-width: 280px !important; padding: 8px 10px !important; }
-    .botAvatar, .userAvatarSmall { width: 28px !important; height: 28px !important; font-size: 8px !important; }
     .header { padding: 12px 16px !important; }
     .chatArea { padding: 12px 16px !important; }
     .controlsArea { padding: 12px 16px 20px !important; }
     .micBtn, .stopBtn, .spinnerBtn { width: 56px !important; height: 56px !important; }
     .headerTitle { font-size: 16px !important; }
     .headerSub { font-size: 10px !important; }
+    .botAvatar, .userAvatarSmall { width: 28px !important; height: 28px !important; font-size: 8px !important; }
+    .botBubble, .userBubble { max-width: 280px !important; padding: 8px 10px !important; }
+    .msgRow { gap: 6px !important; }
+    .waveform { height: 40px !important; }
+    .bar { width: 3px !important; }
+  }
+
+  @media (max-width: 480px) {
+    .botBubble, .userBubble { max-width: 240px !important; }
+    .headerActions { gap: 4px !important; }
+    .iconBtn { padding: 4px 8px !important; }
+    .recTimer { padding: 3px 8px !important; font-size: 11px !important; }
   }
 `;
 
