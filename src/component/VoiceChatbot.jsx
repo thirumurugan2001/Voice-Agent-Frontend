@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import API_URLS  from './apiURL';
 
 // ─── Audio Visualizer ─────────────────────────────────────────────────────────
 const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
@@ -409,7 +410,7 @@ const VoiceChatbot = () => {
       reader.readAsDataURL(audioBlob);
       reader.onloadend = async () => {
         const base64Audio = reader.result.split(',')[1];
-        const response = await fetch('https://voice-agent-teal-eight.vercel.app/chatbot/voice/', {
+        const response = await fetch(API_URLS.CHATBOT.ABOUT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ base64: base64Audio, extension: '.wav' }),
