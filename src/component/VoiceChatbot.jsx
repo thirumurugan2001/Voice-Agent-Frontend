@@ -1,56 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-// ─── Global Audio Controller ─────────────────────────────────────────────────
-// This ensures only one audio instance plays at a time across the entire app
-class AudioController {
-  constructor() {
-    this.currentAudio = null;
-    this.currentPlayingId = null;
-    this.listeners = new Map();
-  }
-
-  play(audioElement, audioId, onPlayCallback) {
-    // Stop any currently playing audio
-    if (this.currentAudio && this.currentAudio !== audioElement) {
-      this.currentAudio.pause();
-      this.currentAudio.currentTime = 0;
-      
-      // Notify the component that its audio was stopped
-      if (this.currentPlayingId && this.listeners.has(this.currentPlayingId)) {
-        this.listeners.get(this.currentPlayingId)();
-      }
-    }
-    
-    // Set new audio as current
-    this.currentAudio = audioElement;
-    this.currentPlayingId = audioId;
-    
-    // Play the new audio
-    audioElement.play().catch(e => console.warn('Playback failed:', e));
-    
-    if (onPlayCallback) onPlayCallback();
-  }
-
-  stop(audioElement, audioId) {
-    if (this.currentAudio === audioElement && this.currentPlayingId === audioId) {
-      this.currentAudio.pause();
-      this.currentAudio.currentTime = 0;
-      this.currentAudio = null;
-      this.currentPlayingId = null;
-    }
-  }
-
-  registerListener(audioId, onStopCallback) {
-    this.listeners.set(audioId, onStopCallback);
-  }
-
-  unregisterListener(audioId) {
-    this.listeners.delete(audioId);
-  }
-}
-
-const audioController = new AudioController();
-
 // ─── Audio Visualizer GIF (Canvas-based animated bars) ───────────────────────
 const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
   const canvasRef = useRef(null);
@@ -131,29 +80,13 @@ const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
 };
 
 // ─── Audio Player Component ───────────────────────────────────────────────────
-const AudioMessage = ({ audioUrl, side, timestamp, onEnded, isDarkMode, audioId }) => {
+const AudioMessage = ({ audioUrl, side, timestamp, onEnded, isDarkMode }) => {
   const audioRef = useRef(null);
   const progressRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const rafRef = useRef(null);
-
-  // Register with audio controller when component mounts
-  useEffect(() => {
-    audioController.registerListener(audioId, () => {
-      // This gets called when another audio starts playing
-      if (audioRef.current && playing) {
-        audioRef.current.pause();
-        setPlaying(false);
-        onEnded?.();
-      }
-    });
-
-    return () => {
-      audioController.unregisterListener(audioId);
-    };
-  }, [audioId, playing, onEnded]);
 
   useEffect(() => {
     const el = audioRef.current;
@@ -232,19 +165,8 @@ const AudioMessage = ({ audioUrl, side, timestamp, onEnded, isDarkMode, audioId 
   const togglePlay = () => {
     const el = audioRef.current;
     if (!el) return;
-    
-    if (playing) {
-      // Stop current audio
-      audioController.stop(el, audioId);
-      el.pause();
-      setPlaying(false);
-      onEnded?.();
-    } else {
-      // Play new audio - controller will handle stopping any other playing audio
-      audioController.play(el, audioId, () => {
-        setPlaying(true);
-      });
-    }
+    if (playing) { el.pause(); setPlaying(false); }
+    else { el.play().catch(e => console.warn('Playback failed:', e)); setPlaying(true); }
   };
 
   const seek = (e) => {
@@ -397,6 +319,7 @@ const VoiceChatbot = () => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [error, setError] = useState('');
   const [bars, setBars] = useState(Array(32).fill(2));
+  const [playingId, setPlayingId] = useState(null);
   const [pendingUserMessage, setPendingUserMessage] = useState(null);
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const { isFullscreen, toggleFullscreen } = useFullscreen();
@@ -498,6 +421,7 @@ const VoiceChatbot = () => {
           const updated = prev.map(msg => msg.id === userMsgId ? { ...msg, isPending: false } : msg);
           return [...updated, { id: botMsgId, type: 'bot', audioUrl: botAudioUrl, timestamp: new Date(), isPending: false }];
         });
+        setPlayingId(botMsgId);
         setIsProcessing(false);
         setPendingUserMessage(null);
       };
@@ -694,9 +618,8 @@ const VoiceChatbot = () => {
                             audioUrl={msg.audioUrl}
                             side="user"
                             timestamp={msg.timestamp}
-                            onEnded={() => {}}
+                            onEnded={() => setPlayingId(null)}
                             isDarkMode={isDarkMode}
-                            audioId={`user-${msg.id}`}
                           />
                           <div style={{ ...styles.bubbleTime, color: theme.textMuted }}>
                             {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -712,9 +635,8 @@ const VoiceChatbot = () => {
                             audioUrl={msg.audioUrl}
                             side="bot"
                             timestamp={msg.timestamp}
-                            onEnded={() => {}}
+                            onEnded={() => setPlayingId(null)}
                             isDarkMode={isDarkMode}
-                            audioId={`bot-${msg.id}`}
                           />
                           <div style={{ ...styles.bubbleTime, color: theme.textMuted }}>
                             {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
