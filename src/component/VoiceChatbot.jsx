@@ -445,7 +445,7 @@ const VoiceChatbot = () => {
     <div style={{ ...styles.root, background: theme.bgPrimary }}>
       <style>{css}</style>
 
-      {/* Mobile Menu Button */}
+      {/* Mobile Menu Button - Positioned to not overlap header */}
       {isMobile && (
         <button 
           onClick={() => setShowMobileSidebar(!showMobileSidebar)} 
@@ -535,9 +535,9 @@ const VoiceChatbot = () => {
         {/* Main */}
         <main style={{ ...styles.main, background: theme.bgPrimary }}>
           <header style={{ ...styles.header, borderBottomColor: theme.border, background: theme.bgPrimary }}>
-            <div>
-              <div style={{ ...styles.headerTitle, color: theme.textPrimary }}>AI Voice Chat - Thirumurugan Subramaniyan</div>
-              <div style={{ ...styles.headerSub, color: theme.textMuted }}>Speak naturally — ask anything about Thiru's profile</div>
+            <div style={isMobile ? styles.headerTitleMobile : styles.headerTitle}>
+              <div style={{ ...styles.headerTitleText, color: theme.textPrimary }}>AI Voice Chat</div>
+              <div style={{ ...styles.headerSubText, color: theme.textMuted }}>Speak naturally — ask anything about Thiru's profile</div>
             </div>
             <div style={styles.headerActions}>
               {isRecording && (
@@ -747,8 +747,8 @@ const styles = {
   },
   mobileMenuBtn: {
     position: 'fixed',
-    top: 12,
-    left: 12,
+    top: 16,
+    left: 16,
     zIndex: 100,
     width: 40,
     height: 40,
@@ -877,13 +877,27 @@ const styles = {
     flexWrap: 'wrap',
     gap: 12,
   },
+  headerTitle: {
+    flex: 1,
+  },
+  headerTitleMobile: {
+    flex: 1,
+    marginLeft: 48,
+  },
+  headerTitleText: {
+    fontSize: 20,
+    fontWeight: 700,
+    letterSpacing: -0.3,
+  },
+  headerSubText: {
+    fontSize: 12,
+    marginTop: 3,
+  },
   headerActions: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
   },
-  headerTitle: { fontSize: 20, fontWeight: 700, letterSpacing: -0.3 },
-  headerSub: { fontSize: 12, marginTop: 3 },
   recTimer: {
     display: 'flex', alignItems: 'center', gap: 7,
     background: '#fee2e2',
@@ -1091,8 +1105,6 @@ const css = `
     .chatArea { padding: 12px 16px !important; }
     .controlsArea { padding: 12px 16px 20px !important; }
     .micBtn, .stopBtn, .spinnerBtn { width: 56px !important; height: 56px !important; }
-    .headerTitle { font-size: 16px !important; }
-    .headerSub { font-size: 10px !important; }
     .botAvatar, .userAvatarSmall { width: 28px !important; height: 28px !important; font-size: 8px !important; }
     .botBubble, .userBubble { max-width: 280px !important; padding: 8px 10px !important; }
     .msgRow { gap: 6px !important; }
@@ -1105,6 +1117,10 @@ const css = `
     .headerActions { gap: 4px !important; }
     .iconBtn { padding: 4px 8px !important; }
     .recTimer { padding: 3px 8px !important; font-size: 11px !important; }
+    .headerTitleText { font-size: 14px !important; }
+    .headerSubText { font-size: 9px !important; }
+    .mobileMenuBtn { top: 12px !important; left: 12px !important; width: 36px !important; height: 36px !important; }
+    .headerTitleMobile { margin-left: 44px !important; }
   }
 `;
 
