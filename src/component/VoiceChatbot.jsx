@@ -102,7 +102,6 @@ const AudioMessage = ({
   const [currentTime, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const rafRef = useRef(null);
-  const [isLoading, setIsLoading] = useState(true);
 
   // ── Sync audio element with controlled isPlaying ──
   useEffect(() => {
@@ -127,75 +126,47 @@ const AudioMessage = ({
     return () => cancelAnimationFrame(rafRef.current);
   }, [isPlaying]);
 
-  // ── Load audio and get duration correctly ──
+  // ── Load audio + fix Infinity duration for webm blobs ──
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
-    
-    setIsLoading(true);
     setCurrent(0);
     setDuration(0);
-    
-    const handleLoadedMetadata = () => {
-      let dur = el.duration;
-      // Handle infinite duration (common with blobs)
-      if (!isFinite(dur) || isNaN(dur) || dur === Infinity) {
-        // Create a temporary audio element to get duration
-        const tempAudio = new Audio();
-        tempAudio.preload = 'metadata';
-        tempAudio.onloadedmetadata = () => {
-          if (isFinite(tempAudio.duration) && !isNaN(tempAudio.duration) && tempAudio.duration > 0) {
-            setDuration(tempAudio.duration);
-          }
-          URL.revokeObjectURL(tempAudio.src);
-          setIsLoading(false);
-        };
-        tempAudio.src = audioUrl;
-        return;
-      }
-      
-      if (dur > 0) {
-        setDuration(dur);
-      }
-      setIsLoading(false);
-    };
-    
-    const handleDurationChange = () => {
+    el.load();
+
+    let didSeek = false;
+    const trySetDuration = () => {
       const dur = el.duration;
-      if (isFinite(dur) && !isNaN(dur) && dur > 0) {
-        setDuration(dur);
-        setIsLoading(false);
-      }
+      if (isFinite(dur) && !isNaN(dur) && dur > 0) { setDuration(dur); return true; }
+      return false;
     };
-    
+    const handleLoadedMetadata = () => {
+      if (!trySetDuration() && !didSeek) { didSeek = true; el.currentTime = 1e10; }
+    };
+    const handleSeeked = () => {
+      if (didSeek) { trySetDuration(); el.currentTime = 0; didSeek = false; }
+    };
+    const handleDurationChange = () => trySetDuration();
     const handleEnded = () => {
       setCurrent(0);
       cancelAnimationFrame(rafRef.current);
       onEnded?.();
     };
-    
-    const handleError = (e) => {
-      console.error('Audio loading error:', e);
-      setIsLoading(false);
-    };
 
     el.addEventListener('loadedmetadata', handleLoadedMetadata);
     el.addEventListener('durationchange', handleDurationChange);
+    el.addEventListener('seeked', handleSeeked);
     el.addEventListener('ended', handleEnded);
-    el.addEventListener('error', handleError);
-    
-    // Force load
-    el.load();
 
     return () => {
       el.pause();
       el.removeEventListener('loadedmetadata', handleLoadedMetadata);
       el.removeEventListener('durationchange', handleDurationChange);
+      el.removeEventListener('seeked', handleSeeked);
       el.removeEventListener('ended', handleEnded);
-      el.removeEventListener('error', handleError);
       cancelAnimationFrame(rafRef.current);
     };
-  }, [audioUrl, onEnded]);
+  }, [audioUrl]);
 
   const togglePlay = () => {
     if (isPlaying) {
@@ -216,9 +187,7 @@ const AudioMessage = ({
 
   const fmt = (s) => {
     if (!isFinite(s) || isNaN(s) || s < 0) return '00:00';
-    const mins = Math.floor(s / 60);
-    const secs = Math.floor(s % 60);
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   };
 
   const pct = (duration > 0 && isFinite(duration)) ? (currentTime / duration) * 100 : 0;
@@ -237,25 +206,15 @@ const AudioMessage = ({
       padding: '10px 12px', borderRadius: 14, minWidth: 220,
       background: bgColor, border: `1px solid ${borderColor}`, position: 'relative',
     }}>
-      <audio ref={audioRef} src={audioUrl} preload="metadata" />
-      
-      {isLoading && duration === 0 && (
-        <div style={{
-          position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-          width: 20, height: 20, borderRadius: '50%', border: '2px solid rgba(124,58,237,0.2)',
-          borderTopColor: '#7c3aed', animation: 'spin 0.8s linear infinite'
-        }} />
-      )}
+      <audio ref={audioRef} src={audioUrl} preload="auto" />
 
       <button
         onClick={togglePlay}
-        disabled={isLoading || duration === 0}
         style={{
           width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-          background: gradient, border: 'none', cursor: (isLoading || duration === 0) ? 'not-allowed' : 'pointer',
+          background: gradient, border: 'none', cursor: 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           transition: 'transform 0.12s',
-          opacity: (isLoading || duration === 0) ? 0.6 : 1,
           boxShadow: isPlaying
             ? `0 0 0 4px ${side === 'user' ? 'rgba(16,185,129,0.2)' : 'rgba(124,58,237,0.2)'}`
             : 'none',
@@ -287,7 +246,7 @@ const AudioMessage = ({
           fontSize: 10, color: textColor, fontVariantNumeric: 'tabular-nums',
         }}>
           <span>{fmt(currentTime)}</span>
-          <span>{duration > 0 ? fmt(duration) : isLoading ? 'Loading...' : '--:--'}</span>
+          <span>{duration > 0 ? fmt(duration) : '--:--'}</span>
         </div>
       </div>
     </div>
@@ -347,6 +306,23 @@ const useMobileDetect = () => {
   return isMobile;
 };
 
+// Helper function to get audio duration from blob
+const getAudioDuration = (blob) => {
+  return new Promise((resolve) => {
+    const audio = new Audio();
+    const url = URL.createObjectURL(blob);
+    audio.addEventListener('loadedmetadata', () => {
+      URL.revokeObjectURL(url);
+      resolve(audio.duration);
+    });
+    audio.addEventListener('error', () => {
+      URL.revokeObjectURL(url);
+      resolve(0);
+    });
+    audio.src = url;
+  });
+};
+
 // ─── Main Chatbot ─────────────────────────────────────────────────────────────
 const VoiceChatbot = () => {
   const [isRecording, setIsRecording] = useState(false);
@@ -356,6 +332,7 @@ const VoiceChatbot = () => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [error, setError] = useState('');
   const [bars, setBars] = useState(Array(32).fill(2));
+  const [actualDuration, setActualDuration] = useState(0); // Track actual audio duration
 
   // ── Single source of truth for which message is playing ──
   const [playingId, setPlayingId] = useState(null);
@@ -372,7 +349,7 @@ const VoiceChatbot = () => {
   const animationFrameRef = useRef(null);
   const chatEndRef = useRef(null);
   const streamRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
+  const recordingStartTimeRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -417,73 +394,50 @@ const VoiceChatbot = () => {
   };
 
   const startRecording = async () => {
+    // Stop any playing audio before recording
     setPlayingId(null);
     setError('');
+    setActualDuration(0);
+    recordingStartTimeRef.current = Date.now();
+    
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 44100
-        } 
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       
+      // Close existing AudioContext if any
       if (audioContextRef.current) {
         await audioContextRef.current.close();
       }
       
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
       analyserRef.current = audioContextRef.current.createAnalyser();
       const source = audioContextRef.current.createMediaStreamSource(stream);
       source.connect(analyserRef.current);
       
+      // Resume AudioContext if it's suspended (browser policy for mobile)
       if (audioContextRef.current.state === 'suspended') {
         await audioContextRef.current.resume();
       }
       
       startVisualization();
 
-      // Use appropriate MIME type for mobile
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm') 
-        ? 'audio/webm' 
-        : MediaRecorder.isTypeSupported('audio/mp4')
-        ? 'audio/mp4'
-        : 'audio/webm';
-      
-      const recorder = new MediaRecorder(stream, { mimeType });
-      mediaRecorderRef.current = recorder;
+      const recorder = new MediaRecorder(stream);
       const chunks = [];
-      
-      recorder.ondataavailable = (e) => { 
-        if (e.data.size > 0) chunks.push(e.data); 
-      };
-      
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
       recorder.onstop = async () => {
+        // Calculate actual recording duration
+        const endTime = Date.now();
+        const recordedDuration = (endTime - (recordingStartTimeRef.current || endTime)) / 1000;
+        
+        // Create audio blob with proper MIME type
         const mimeType = recorder.mimeType || 'audio/webm';
         const audioBlob = new Blob(chunks, { type: mimeType });
         
-        // Create a proper audio URL and validate duration
+        // Get accurate duration from audio metadata
+        const accurateDuration = await getAudioDuration(audioBlob);
+        setActualDuration(accurateDuration);
+        
         const userAudioUrl = URL.createObjectURL(audioBlob);
-        
-        // Validate audio duration before adding to chat
-        const duration = await getAudioDuration(userAudioUrl);
-        
-        if (duration < 0.5) {
-          setError('Recording too short. Please speak for at least 1 second.');
-          URL.revokeObjectURL(userAudioUrl);
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach(t => t.stop());
-            streamRef.current = null;
-          }
-          if (audioContextRef.current) {
-            await audioContextRef.current.close();
-            audioContextRef.current = null;
-          }
-          setIsProcessing(false);
-          return;
-        }
-        
         const userMsgId = Date.now();
         const userMessage = { 
           id: userMsgId, 
@@ -491,11 +445,12 @@ const VoiceChatbot = () => {
           audioUrl: userAudioUrl, 
           timestamp: new Date(), 
           isPending: true,
-          duration: duration
+          duration: accurateDuration // Store accurate duration
         };
         setChatHistory(prev => [...prev, userMessage]);
         setPendingUserMessage(userMessage);
         
+        // Stop all tracks from the stream
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(t => t.stop());
           streamRef.current = null;
@@ -510,7 +465,8 @@ const VoiceChatbot = () => {
         await sendAudioToBackend(audioBlob, userMsgId);
       };
       
-      recorder.start(100);
+      // Request data in smaller chunks for better mobile compatibility
+      recorder.start(250);
       setMediaRecorder(recorder);
       setIsRecording(true);
       setRecordingTime(0);
@@ -519,24 +475,6 @@ const VoiceChatbot = () => {
       console.error('Microphone error:', err);
       setError('Microphone access denied. Please check your browser permissions.');
     }
-  };
-  
-  // Helper function to get audio duration
-  const getAudioDuration = (url) => {
-    return new Promise((resolve) => {
-      const audio = new Audio();
-      audio.addEventListener('loadedmetadata', () => {
-        const duration = audio.duration;
-        URL.revokeObjectURL(url);
-        resolve(isFinite(duration) && !isNaN(duration) ? duration : 0);
-      });
-      audio.addEventListener('error', () => {
-        URL.revokeObjectURL(url);
-        resolve(0);
-      });
-      audio.src = url;
-      audio.load();
-    });
   };
 
   const stopRecording = () => {
@@ -551,7 +489,9 @@ const VoiceChatbot = () => {
 
   const sendAudioToBackend = async (audioBlob, userMsgId) => {
     try {
+      // Convert blob to base64 with proper handling for mobile
       const base64Audio = await blobToBase64(audioBlob);
+      // Remove data URL prefix if present
       const base64Data = base64Audio.split(',')[1] || base64Audio;
       
       const response = await fetch(API_URLS.CHATBOT.ABOUT, {
@@ -563,22 +503,12 @@ const VoiceChatbot = () => {
       const botBlob = await response.blob();
       const botAudioUrl = URL.createObjectURL(botBlob);
       const botMsgId = Date.now();
-      
-      // Get bot audio duration
-      const botDuration = await getAudioDuration(botAudioUrl);
-      
       setChatHistory(prev => {
         const updated = prev.map(msg => msg.id === userMsgId ? { ...msg, isPending: false } : msg);
-        return [...updated, { 
-          id: botMsgId, 
-          type: 'bot', 
-          audioUrl: botAudioUrl, 
-          timestamp: new Date(), 
-          isPending: false,
-          duration: botDuration
-        }];
+        return [...updated, { id: botMsgId, type: 'bot', audioUrl: botAudioUrl, timestamp: new Date(), isPending: false }];
       });
-      
+      // FIXED: Do NOT auto-play the bot response
+      // Just update state without setting playingId
       setIsProcessing(false);
       setPendingUserMessage(null);
     } catch (err) {
@@ -590,6 +520,7 @@ const VoiceChatbot = () => {
     }
   };
 
+  // Helper function to convert blob to base64
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -599,7 +530,10 @@ const VoiceChatbot = () => {
     });
   };
 
-  const formatTime = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  const formatTime = (s) => {
+    const clamped = Math.max(0, Math.min(3599, s || 0));
+    return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(Math.floor(clamped % 60)).padStart(2, '0')}`;
+  };
 
   const suggestions = [
     { id: 1, text: "Tell me about your experience as an AI Research Engineer" },
