@@ -27,6 +27,25 @@ const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
     const bars = barsRef.current;
     let t = 0;
 
+    // Add roundRect if not available
+    if (!ctx.roundRect) {
+      ctx.roundRect = function(x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        this.moveTo(x+r, y);
+        this.lineTo(x+w-r, y);
+        this.quadraticCurveTo(x+w, y, x+w, y+r);
+        this.lineTo(x+w, y+h-r);
+        this.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+        this.lineTo(x+r, y+h);
+        this.quadraticCurveTo(x, y+h, x, y+h-r);
+        this.lineTo(x, y+r);
+        this.quadraticCurveTo(x, y, x+r, y);
+        this.closePath();
+        return this;
+      };
+    }
+
     const animate = () => {
       ctx.clearRect(0, 0, W, H);
       const barW = 3, gap = 2;
@@ -73,10 +92,6 @@ const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
 };
 
 // ─── Audio Player (Controlled) ────────────────────────────────────────────────
-// isPlaying is fully controlled by parent via playingId
-// onRequestPlay(id)  → called when user presses play  (parent sets playingId = id)
-// onRequestPause()   → called when user presses pause (parent sets playingId = null)
-// onEnded()          → called when audio finishes     (parent sets playingId = null)
 const AudioMessage = ({
   msgId, audioUrl, side, timestamp,
   isPlaying, onRequestPlay, onRequestPause, onEnded,
@@ -302,7 +317,6 @@ const VoiceChatbot = () => {
   const [bars, setBars] = useState(Array(32).fill(2));
 
   // ── Single source of truth for which message is playing ──
-  // null = nothing playing, otherwise = msg.id of the currently playing message
   const [playingId, setPlayingId] = useState(null);
 
   const [pendingUserMessage, setPendingUserMessage] = useState(null);
@@ -316,6 +330,7 @@ const VoiceChatbot = () => {
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
   const chatEndRef = useRef(null);
+  const streamRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -326,12 +341,13 @@ const VoiceChatbot = () => {
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (audioContextRef.current) audioContextRef.current.close();
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
     };
   }, []);
 
   // ── Audio mutual exclusion handlers ──
-  // When a player requests to play, we set it as the only playing ID.
-  // Any other player that sees its ID !== playingId will pause itself.
   const handleRequestPlay = (id) => {
     setPlayingId(id);
   };
@@ -364,38 +380,67 @@ const VoiceChatbot = () => {
     setError('');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      
+      // Close existing AudioContext if any
+      if (audioContextRef.current) {
+        await audioContextRef.current.close();
+      }
+      
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
       analyserRef.current = audioContextRef.current.createAnalyser();
-      audioContextRef.current.createMediaStreamSource(stream).connect(analyserRef.current);
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      source.connect(analyserRef.current);
+      
+      // Resume AudioContext if it's suspended (browser policy for mobile)
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+      
       startVisualization();
 
       const recorder = new MediaRecorder(stream);
       const chunks = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
       recorder.onstop = async () => {
-        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+        // Create audio blob with proper MIME type
+        const mimeType = recorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(chunks, { type: mimeType });
         const userAudioUrl = URL.createObjectURL(audioBlob);
         const userMsgId = Date.now();
         const userMessage = { id: userMsgId, type: 'user', audioUrl: userAudioUrl, timestamp: new Date(), isPending: true };
         setChatHistory(prev => [...prev, userMessage]);
         setPendingUserMessage(userMessage);
-        stream.getTracks().forEach(t => t.stop());
-        if (audioContextRef.current) audioContextRef.current.close();
+        
+        // Stop all tracks from the stream
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(t => t.stop());
+          streamRef.current = null;
+        }
+        
+        if (audioContextRef.current) {
+          await audioContextRef.current.close();
+          audioContextRef.current = null;
+        }
+        
         setBars(Array(32).fill(2));
         await sendAudioToBackend(audioBlob, userMsgId);
       };
-      recorder.start(100);
+      
+      // Request data in smaller chunks for better mobile compatibility
+      recorder.start(250);
       setMediaRecorder(recorder);
       setIsRecording(true);
       setRecordingTime(0);
       recordingTimerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
-    } catch {
+    } catch (err) {
+      console.error('Microphone error:', err);
       setError('Microphone access denied. Please check your browser permissions.');
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorder && isRecording) {
+    if (mediaRecorder && isRecording && mediaRecorder.state === 'recording') {
       mediaRecorder.stop();
       setIsRecording(false);
       setIsProcessing(true);
@@ -406,28 +451,28 @@ const VoiceChatbot = () => {
 
   const sendAudioToBackend = async (audioBlob, userMsgId) => {
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(audioBlob);
-      reader.onloadend = async () => {
-        const base64Audio = reader.result.split(',')[1];
-        const response = await fetch(API_URLS.CHATBOT.ABOUT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ base64: base64Audio, extension: '.wav' }),
-        });
-        if (!response.ok) throw new Error('Server error');
-        const botBlob = await response.blob();
-        const botAudioUrl = URL.createObjectURL(botBlob);
-        const botMsgId = Date.now();
-        setChatHistory(prev => {
-          const updated = prev.map(msg => msg.id === userMsgId ? { ...msg, isPending: false } : msg);
-          return [...updated, { id: botMsgId, type: 'bot', audioUrl: botAudioUrl, timestamp: new Date(), isPending: false }];
-        });
-        // Auto-play the bot response — stops any other audio first
-        setPlayingId(botMsgId);
-        setIsProcessing(false);
-        setPendingUserMessage(null);
-      };
+      // Convert blob to base64 with proper handling for mobile
+      const base64Audio = await blobToBase64(audioBlob);
+      // Remove data URL prefix if present
+      const base64Data = base64Audio.split(',')[1] || base64Audio;
+      
+      const response = await fetch(API_URLS.CHATBOT.ABOUT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64: base64Data, extension: '.wav' }),
+      });
+      if (!response.ok) throw new Error('Server error');
+      const botBlob = await response.blob();
+      const botAudioUrl = URL.createObjectURL(botBlob);
+      const botMsgId = Date.now();
+      setChatHistory(prev => {
+        const updated = prev.map(msg => msg.id === userMsgId ? { ...msg, isPending: false } : msg);
+        return [...updated, { id: botMsgId, type: 'bot', audioUrl: botAudioUrl, timestamp: new Date(), isPending: false }];
+      });
+      // FIXED: Do NOT auto-play the bot response
+      // Just update state without setting playingId
+      setIsProcessing(false);
+      setPendingUserMessage(null);
     } catch (err) {
       console.error('API Error:', err);
       setError('Failed to reach the server.');
@@ -435,6 +480,16 @@ const VoiceChatbot = () => {
       setChatHistory(prev => prev.map(msg => msg.id === userMsgId ? { ...msg, isPending: false, hasError: true } : msg));
       setPendingUserMessage(null);
     }
+  };
+
+  // Helper function to convert blob to base64
+  const blobToBase64 = (blob) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
   };
 
   const formatTime = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
