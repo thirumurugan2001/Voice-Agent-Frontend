@@ -27,6 +27,24 @@ const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
     const bars = barsRef.current;
     let t = 0;
 
+    // Add roundRect if not available
+    if (!ctx.roundRect) {
+      ctx.roundRect = function(x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        this.moveTo(x+r, y);
+        this.lineTo(x+w-r, y);
+        this.quadraticCurveTo(x+w, y, x+w, y+r);
+        this.lineTo(x+w, y+h-r);
+        this.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+        this.lineTo(x+r, y+h);
+        this.quadraticCurveTo(x, y+h, x, y+h-r);
+        this.lineTo(x, y+r);
+        this.quadraticCurveTo(x, y, x+r, y);
+        return this;
+      };
+    }
+
     const animate = () => {
       ctx.clearRect(0, 0, W, H);
       const barW = 3, gap = 2;
@@ -73,10 +91,6 @@ const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
 };
 
 // ─── Audio Player (Controlled) ────────────────────────────────────────────────
-// isPlaying is fully controlled by parent via playingId
-// onRequestPlay(id)  → called when user presses play  (parent sets playingId = id)
-// onRequestPause()   → called when user presses pause (parent sets playingId = null)
-// onEnded()          → called when audio finishes     (parent sets playingId = null)
 const AudioMessage = ({
   msgId, audioUrl, side, timestamp,
   isPlaying, onRequestPlay, onRequestPause, onEnded,
@@ -87,13 +101,21 @@ const AudioMessage = ({
   const [currentTime, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const rafRef = useRef(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   // ── Sync audio element with controlled isPlaying ──
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
     if (isPlaying) {
-      el.play().catch(e => console.warn('Playback failed:', e));
+      const playPromise = el.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(e => {
+          console.warn('Playback failed:', e);
+          setLoadError(true);
+        });
+      }
     } else {
       if (!el.paused) el.pause();
     }
@@ -115,45 +137,97 @@ const AudioMessage = ({
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
+    
     setCurrent(0);
     setDuration(0);
+    setIsLoading(true);
+    setLoadError(false);
+    
+    // Reset audio element
     el.load();
-
-    let didSeek = false;
-    const trySetDuration = () => {
+    
+    let loadedMetadataHandler = null;
+    let durationChangeHandler = null;
+    let loadedDataHandler = null;
+    let errorHandler = null;
+    let canPlayHandler = null;
+    
+    const updateDuration = () => {
       const dur = el.duration;
-      if (isFinite(dur) && !isNaN(dur) && dur > 0) { setDuration(dur); return true; }
+      if (isFinite(dur) && !isNaN(dur) && dur > 0) {
+        setDuration(dur);
+        setIsLoading(false);
+        return true;
+      }
       return false;
     };
+    
+    const handleCanPlay = () => {
+      updateDuration();
+    };
+    
     const handleLoadedMetadata = () => {
-      if (!trySetDuration() && !didSeek) { didSeek = true; el.currentTime = 1e10; }
+      updateDuration();
+      // For blob URLs, sometimes we need to wait a bit more
+      setTimeout(updateDuration, 100);
     };
-    const handleSeeked = () => {
-      if (didSeek) { trySetDuration(); el.currentTime = 0; didSeek = false; }
+    
+    const handleDurationChange = () => {
+      updateDuration();
     };
-    const handleDurationChange = () => trySetDuration();
+    
+    const handleLoadedData = () => {
+      updateDuration();
+    };
+    
+    const handleError = (e) => {
+      console.error('Audio load error:', e);
+      setLoadError(true);
+      setIsLoading(false);
+    };
+    
     const handleEnded = () => {
       setCurrent(0);
       cancelAnimationFrame(rafRef.current);
       onEnded?.();
     };
-
+    
+    el.addEventListener('canplay', handleCanPlay);
     el.addEventListener('loadedmetadata', handleLoadedMetadata);
     el.addEventListener('durationchange', handleDurationChange);
-    el.addEventListener('seeked', handleSeeked);
+    el.addEventListener('loadeddata', handleLoadedData);
+    el.addEventListener('error', handleError);
     el.addEventListener('ended', handleEnded);
-
+    
+    // Force a metadata load by setting a tiny currentTime
+    const tryForceDuration = () => {
+      if (!updateDuration() && el.readyState < 1) {
+        // For some blob types, we need to "touch" the audio
+        const originalCurrentTime = el.currentTime;
+        el.currentTime = 0.001;
+        setTimeout(() => {
+          el.currentTime = originalCurrentTime;
+          updateDuration();
+        }, 50);
+      }
+    };
+    
+    setTimeout(tryForceDuration, 100);
+    
     return () => {
       el.pause();
+      el.removeEventListener('canplay', handleCanPlay);
       el.removeEventListener('loadedmetadata', handleLoadedMetadata);
       el.removeEventListener('durationchange', handleDurationChange);
-      el.removeEventListener('seeked', handleSeeked);
+      el.removeEventListener('loadeddata', handleLoadedData);
+      el.removeEventListener('error', handleError);
       el.removeEventListener('ended', handleEnded);
       cancelAnimationFrame(rafRef.current);
     };
-  }, [audioUrl]);
+  }, [audioUrl, onEnded]);
 
   const togglePlay = () => {
+    if (loadError) return;
     if (isPlaying) {
       onRequestPause();
     } else {
@@ -163,19 +237,22 @@ const AudioMessage = ({
 
   const seek = (e) => {
     const el = audioRef.current;
-    if (!el || !duration) return;
+    if (!el || !duration || isLoading || loadError) return;
     const rect = progressRef.current.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    el.currentTime = pct * duration;
-    setCurrent(el.currentTime);
+    const newTime = pct * duration;
+    el.currentTime = newTime;
+    setCurrent(newTime);
   };
 
   const fmt = (s) => {
     if (!isFinite(s) || isNaN(s) || s < 0) return '00:00';
-    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    const mins = Math.floor(s / 60);
+    const secs = Math.floor(s % 60);
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  const pct = (duration > 0 && isFinite(duration)) ? (currentTime / duration) * 100 : 0;
+  const pct = (duration > 0 && isFinite(duration) && !isLoading) ? (currentTime / duration) * 100 : 0;
   const gradient = side === 'user'
     ? 'linear-gradient(135deg, #10b981, #059669)'
     : 'linear-gradient(135deg, #7c3aed, #4f46e5)';
@@ -191,21 +268,34 @@ const AudioMessage = ({
       padding: '10px 12px', borderRadius: 14, minWidth: 220,
       background: bgColor, border: `1px solid ${borderColor}`, position: 'relative',
     }}>
-      <audio ref={audioRef} src={audioUrl} preload="auto" />
+      <audio 
+        ref={audioRef} 
+        src={audioUrl} 
+        preload="auto"
+        crossOrigin="anonymous"
+      />
 
       <button
         onClick={togglePlay}
+        disabled={loadError || isLoading}
         style={{
           width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-          background: gradient, border: 'none', cursor: 'pointer',
+          background: gradient, border: 'none', cursor: (loadError || isLoading) ? 'not-allowed' : 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           transition: 'transform 0.12s',
+          opacity: (loadError || isLoading) ? 0.6 : 1,
           boxShadow: isPlaying
             ? `0 0 0 4px ${side === 'user' ? 'rgba(16,185,129,0.2)' : 'rgba(124,58,237,0.2)'}`
             : 'none',
         }}
       >
-        {isPlaying ? <PauseIcon /> : <PlayIcon />}
+        {isLoading ? (
+          <div style={{ width: 11, height: 11, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', animation: 'spin 0.8s linear infinite' }} />
+        ) : isPlaying ? (
+          <PauseIcon />
+        ) : (
+          <PlayIcon />
+        )}
       </button>
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -216,7 +306,8 @@ const AudioMessage = ({
           onClick={seek}
           style={{
             height: 3, borderRadius: 2, background: progressBg,
-            cursor: 'pointer', position: 'relative', overflow: 'hidden',
+            cursor: (loadError || isLoading || !duration) ? 'default' : 'pointer',
+            position: 'relative', overflow: 'hidden',
           }}
         >
           <div style={{
@@ -231,7 +322,7 @@ const AudioMessage = ({
           fontSize: 10, color: textColor, fontVariantNumeric: 'tabular-nums',
         }}>
           <span>{fmt(currentTime)}</span>
-          <span>{duration > 0 ? fmt(duration) : '--:--'}</span>
+          <span>{!isLoading && duration > 0 ? fmt(duration) : '--:--'}</span>
         </div>
       </div>
     </div>
@@ -301,8 +392,6 @@ const VoiceChatbot = () => {
   const [error, setError] = useState('');
   const [bars, setBars] = useState(Array(32).fill(2));
 
-  // ── Single source of truth for which message is playing ──
-  // null = nothing playing, otherwise = msg.id of the currently playing message
   const [playingId, setPlayingId] = useState(null);
 
   const [pendingUserMessage, setPendingUserMessage] = useState(null);
@@ -329,9 +418,6 @@ const VoiceChatbot = () => {
     };
   }, []);
 
-  // ── Audio mutual exclusion handlers ──
-  // When a player requests to play, we set it as the only playing ID.
-  // Any other player that sees its ID !== playingId will pause itself.
   const handleRequestPlay = (id) => {
     setPlayingId(id);
   };
@@ -359,7 +445,6 @@ const VoiceChatbot = () => {
   };
 
   const startRecording = async () => {
-    // Stop any playing audio before recording
     setPlayingId(null);
     setError('');
     try {
@@ -369,7 +454,7 @@ const VoiceChatbot = () => {
       audioContextRef.current.createMediaStreamSource(stream).connect(analyserRef.current);
       startVisualization();
 
-      const recorder = new MediaRecorder(stream);
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       const chunks = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
       recorder.onstop = async () => {
@@ -389,7 +474,8 @@ const VoiceChatbot = () => {
       setIsRecording(true);
       setRecordingTime(0);
       recordingTimerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
-    } catch {
+    } catch (err) {
+      console.error('Microphone error:', err);
       setError('Microphone access denied. Please check your browser permissions.');
     }
   };
@@ -406,31 +492,44 @@ const VoiceChatbot = () => {
 
   const sendAudioToBackend = async (audioBlob, userMsgId) => {
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(audioBlob);
-      reader.onloadend = async () => {
-        const base64Audio = reader.result.split(',')[1];
-        const response = await fetch(API_URLS.CHATBOT.ABOUT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ base64: base64Audio, extension: '.wav' }),
-        });
-        if (!response.ok) throw new Error('Server error');
-        const botBlob = await response.blob();
-        const botAudioUrl = URL.createObjectURL(botBlob);
-        const botMsgId = Date.now();
-        setChatHistory(prev => {
-          const updated = prev.map(msg => msg.id === userMsgId ? { ...msg, isPending: false } : msg);
-          return [...updated, { id: botMsgId, type: 'bot', audioUrl: botAudioUrl, timestamp: new Date(), isPending: false }];
-        });
-        // Auto-play the bot response — stops any other audio first
-        setPlayingId(botMsgId);
-        setIsProcessing(false);
-        setPendingUserMessage(null);
-      };
+      // Convert blob to base64 more efficiently
+      const base64Audio = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(audioBlob);
+      });
+      
+      const response = await fetch(API_URLS.CHATBOT.ABOUT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64: base64Audio, extension: '.wav' }),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Server error: ${response.status} ${errorText}`);
+      }
+      
+      const botBlob = await response.blob();
+      // Ensure the blob has correct type
+      const audioType = botBlob.type || 'audio/wav';
+      const correctBlob = new Blob([botBlob], { type: audioType });
+      const botAudioUrl = URL.createObjectURL(correctBlob);
+      const botMsgId = Date.now();
+      
+      setChatHistory(prev => {
+        const updated = prev.map(msg => msg.id === userMsgId ? { ...msg, isPending: false } : msg);
+        return [...updated, { id: botMsgId, type: 'bot', audioUrl: botAudioUrl, timestamp: new Date(), isPending: false }];
+      });
+      
+      // Auto-play the bot response
+      setPlayingId(botMsgId);
+      setIsProcessing(false);
+      setPendingUserMessage(null);
     } catch (err) {
       console.error('API Error:', err);
-      setError('Failed to reach the server.');
+      setError(err.message || 'Failed to reach the server. Please try again.');
       setIsProcessing(false);
       setChatHistory(prev => prev.map(msg => msg.id === userMsgId ? { ...msg, isPending: false, hasError: true } : msg));
       setPendingUserMessage(null);
@@ -952,6 +1051,7 @@ const css = `
   .pulse-dot { animation: pulseDot 1.2s infinite ease-in-out; }
   @keyframes pulseDot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.7); } }
   .spin { animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 768px) {
     .headerTitle { font-size: 15px !important; }
