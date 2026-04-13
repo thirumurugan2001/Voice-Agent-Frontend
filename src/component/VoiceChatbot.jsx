@@ -27,7 +27,6 @@ const AudioVisualizer = ({ isPlaying, side, isDarkMode }) => {
     const bars = barsRef.current;
     let t = 0;
 
-    // Add roundRect if not available
     if (!ctx.roundRect) {
       ctx.roundRect = function(x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
@@ -103,7 +102,6 @@ const AudioMessage = ({
   const [duration, setDuration] = useState(0);
   const rafRef = useRef(null);
 
-  // ── Sync audio element with controlled isPlaying ──
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
@@ -114,7 +112,6 @@ const AudioMessage = ({
     }
   }, [isPlaying]);
 
-  // ── RAF progress tracking ──
   useEffect(() => {
     const tick = () => {
       if (audioRef.current && isFinite(audioRef.current.currentTime))
@@ -126,7 +123,6 @@ const AudioMessage = ({
     return () => cancelAnimationFrame(rafRef.current);
   }, [isPlaying]);
 
-  // ── Load audio + fix Infinity duration for webm blobs ──
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
@@ -137,14 +133,24 @@ const AudioMessage = ({
     let didSeek = false;
     const trySetDuration = () => {
       const dur = el.duration;
-      if (isFinite(dur) && !isNaN(dur) && dur > 0) { setDuration(dur); return true; }
+      if (isFinite(dur) && !isNaN(dur) && dur > 0) { 
+        setDuration(dur); 
+        return true; 
+      }
       return false;
     };
     const handleLoadedMetadata = () => {
-      if (!trySetDuration() && !didSeek) { didSeek = true; el.currentTime = 1e10; }
+      if (!trySetDuration() && !didSeek) { 
+        didSeek = true; 
+        el.currentTime = 1e10; 
+      }
     };
     const handleSeeked = () => {
-      if (didSeek) { trySetDuration(); el.currentTime = 0; didSeek = false; }
+      if (didSeek) { 
+        trySetDuration(); 
+        el.currentTime = 0; 
+        didSeek = false; 
+      }
     };
     const handleDurationChange = () => trySetDuration();
     const handleEnded = () => {
@@ -306,19 +312,58 @@ const useMobileDetect = () => {
   return isMobile;
 };
 
-// Helper function to get audio duration from blob
-const getAudioDuration = (blob) => {
+// Helper function to get accurate audio duration from blob (works on mobile)
+const getAccurateAudioDuration = (blob) => {
   return new Promise((resolve) => {
     const audio = new Audio();
     const url = URL.createObjectURL(blob);
-    audio.addEventListener('loadedmetadata', () => {
+    
+    let resolved = false;
+    let timeoutId;
+    
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
       URL.revokeObjectURL(url);
-      resolve(audio.duration);
-    });
-    audio.addEventListener('error', () => {
-      URL.revokeObjectURL(url);
-      resolve(0);
-    });
+      audio.removeEventListener('loadedmetadata', onLoaded);
+      audio.removeEventListener('error', onError);
+      audio.src = '';
+      audio.load();
+    };
+    
+    const onLoaded = () => {
+      if (resolved) return;
+      resolved = true;
+      const duration = audio.duration;
+      cleanup();
+      // If duration is infinite or NaN, fallback to a default
+      if (!isFinite(duration) || isNaN(duration) || duration <= 0) {
+        // Fallback: try to get duration from blob size (approximate for PCM)
+        // For webm/opus, this is just a fallback
+        resolve(2.0); // Default 2 seconds fallback
+      } else {
+        resolve(duration);
+      }
+    };
+    
+    const onError = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      // On error, try to estimate from blob size (very rough)
+      const estimatedDuration = Math.max(1, Math.min(30, blob.size / 32000));
+      resolve(estimatedDuration);
+    };
+    
+    // Set timeout for mobile devices where metadata might not load
+    timeoutId = setTimeout(() => {
+      if (!resolved) {
+        console.warn('Audio duration loading timeout');
+        onError();
+      }
+    }, 2000);
+    
+    audio.addEventListener('loadedmetadata', onLoaded);
+    audio.addEventListener('error', onError);
     audio.src = url;
   });
 };
@@ -332,11 +377,8 @@ const VoiceChatbot = () => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [error, setError] = useState('');
   const [bars, setBars] = useState(Array(32).fill(2));
-  const [actualDuration, setActualDuration] = useState(0); // Track actual audio duration
 
-  // ── Single source of truth for which message is playing ──
   const [playingId, setPlayingId] = useState(null);
-
   const [pendingUserMessage, setPendingUserMessage] = useState(null);
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const { isFullscreen, toggleFullscreen } = useFullscreen();
@@ -350,6 +392,7 @@ const VoiceChatbot = () => {
   const chatEndRef = useRef(null);
   const streamRef = useRef(null);
   const recordingStartTimeRef = useRef(null);
+  const recordingChunksRef = useRef([]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -366,7 +409,6 @@ const VoiceChatbot = () => {
     };
   }, []);
 
-  // ── Audio mutual exclusion handlers ──
   const handleRequestPlay = (id) => {
     setPlayingId(id);
   };
@@ -394,17 +436,15 @@ const VoiceChatbot = () => {
   };
 
   const startRecording = async () => {
-    // Stop any playing audio before recording
     setPlayingId(null);
     setError('');
-    setActualDuration(0);
     recordingStartTimeRef.current = Date.now();
+    recordingChunksRef.current = [];
     
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       
-      // Close existing AudioContext if any
       if (audioContextRef.current) {
         await audioContextRef.current.close();
       }
@@ -414,28 +454,43 @@ const VoiceChatbot = () => {
       const source = audioContextRef.current.createMediaStreamSource(stream);
       source.connect(analyserRef.current);
       
-      // Resume AudioContext if it's suspended (browser policy for mobile)
       if (audioContextRef.current.state === 'suspended') {
         await audioContextRef.current.resume();
       }
       
       startVisualization();
 
-      const recorder = new MediaRecorder(stream);
-      const chunks = [];
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      // Use audio/webm codec for better mobile support
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') 
+        ? 'audio/webm' 
+        : 'audio/mp4';
+      
+      const recorder = new MediaRecorder(stream, { mimeType });
+      
+      recorder.ondataavailable = (e) => { 
+        if (e.data.size > 0) {
+          recordingChunksRef.current.push(e.data);
+        }
+      };
+      
       recorder.onstop = async () => {
-        // Calculate actual recording duration
         const endTime = Date.now();
         const recordedDuration = (endTime - (recordingStartTimeRef.current || endTime)) / 1000;
         
-        // Create audio blob with proper MIME type
+        // Create audio blob from chunks
         const mimeType = recorder.mimeType || 'audio/webm';
-        const audioBlob = new Blob(chunks, { type: mimeType });
+        const audioBlob = new Blob(recordingChunksRef.current, { type: mimeType });
         
-        // Get accurate duration from audio metadata
-        const accurateDuration = await getAudioDuration(audioBlob);
-        setActualDuration(accurateDuration);
+        // Get accurate duration using the improved helper
+        let accurateDuration = recordedDuration;
+        try {
+          const duration = await getAccurateAudioDuration(audioBlob);
+          if (duration > 0 && isFinite(duration)) {
+            accurateDuration = duration;
+          }
+        } catch (e) {
+          console.warn('Failed to get accurate duration, using recorded time:', e);
+        }
         
         const userAudioUrl = URL.createObjectURL(audioBlob);
         const userMsgId = Date.now();
@@ -445,12 +500,11 @@ const VoiceChatbot = () => {
           audioUrl: userAudioUrl, 
           timestamp: new Date(), 
           isPending: true,
-          duration: accurateDuration // Store accurate duration
+          duration: accurateDuration
         };
         setChatHistory(prev => [...prev, userMessage]);
         setPendingUserMessage(userMessage);
         
-        // Stop all tracks from the stream
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(t => t.stop());
           streamRef.current = null;
@@ -465,12 +519,20 @@ const VoiceChatbot = () => {
         await sendAudioToBackend(audioBlob, userMsgId);
       };
       
-      // Request data in smaller chunks for better mobile compatibility
-      recorder.start(250);
+      recorder.start(100); // Smaller chunks for better mobile performance
       setMediaRecorder(recorder);
       setIsRecording(true);
       setRecordingTime(0);
-      recordingTimerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime(prev => {
+          const newTime = prev + 1;
+          // Auto-stop after 60 seconds
+          if (newTime >= 60) {
+            stopRecording();
+          }
+          return newTime;
+        });
+      }, 1000);
     } catch (err) {
       console.error('Microphone error:', err);
       setError('Microphone access denied. Please check your browser permissions.');
@@ -489,9 +551,7 @@ const VoiceChatbot = () => {
 
   const sendAudioToBackend = async (audioBlob, userMsgId) => {
     try {
-      // Convert blob to base64 with proper handling for mobile
       const base64Audio = await blobToBase64(audioBlob);
-      // Remove data URL prefix if present
       const base64Data = base64Audio.split(',')[1] || base64Audio;
       
       const response = await fetch(API_URLS.CHATBOT.ABOUT, {
@@ -507,8 +567,6 @@ const VoiceChatbot = () => {
         const updated = prev.map(msg => msg.id === userMsgId ? { ...msg, isPending: false } : msg);
         return [...updated, { id: botMsgId, type: 'bot', audioUrl: botAudioUrl, timestamp: new Date(), isPending: false }];
       });
-      // FIXED: Do NOT auto-play the bot response
-      // Just update state without setting playingId
       setIsProcessing(false);
       setPendingUserMessage(null);
     } catch (err) {
@@ -520,7 +578,6 @@ const VoiceChatbot = () => {
     }
   };
 
-  // Helper function to convert blob to base64
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
